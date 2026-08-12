@@ -1,7 +1,9 @@
 # Whatnot Giveaway Watcher — attach mode
 
-**Spec, not code.** Written 2026-08-12, from findings measured during the
-wn-monitor-web debugging session.
+**The design and the evidence for it.** Written 2026-08-12 before building,
+and updated as building changed it — the *Built* section at the end records
+what the spec got wrong, because a design doc that quietly agrees with the
+code afterwards is worthless.
 
 ## What it is
 
@@ -59,8 +61,9 @@ startup, not assumed.
 
 ## Components
 
-### 1. `launch.py` — start the browser
+### 1. `chrome.py` — start the browser
 
+Not a separate command: `watch.py` calls it, so there is one thing to run.
 Starts Chrome with:
 
 ```
@@ -75,11 +78,12 @@ Starts Chrome with:
 Explicitly **not** `--enable-automation`, and no stealth or spoofing of any
 kind.
 
-Then it verifies, and refuses to continue if wrong:
+Then it verifies and reports loudly if wrong:
 
 - the debug port answers
 - `navigator.webdriver` is `false`
-- a background tab's timers are not throttled
+- the keep-alive flags are actually on the command line, read from
+  `chrome://version`
 
 Profile: a dedicated one you log into once and then use normally, so it ages
 like a real profile. Fresh profiles were challenged fastest in testing.
@@ -182,23 +186,45 @@ Copy, do not rewrite: the notifier classes, `load_config`/`save_state`/
 `prune_state`, `log`, the audit log with its UTF-8 fix, and the config locking
 helper. Everything else is new.
 
-## Build order
+## Built
 
-1. **Attach + probe.** Prove the selectors against real streams. No
-   notifications yet. This phase answers whether the whole idea works.
-2. **Giveaway detection + notifications.** The core.
-3. **Purchases/wins**, once open question 2 is answered.
-4. **Launcher + small status view.** Which tabs are being watched, last
-   detection, whether the keep-alive assertions hold.
+All four phases exist. What the spec got wrong along the way:
+
+**The keep-alive check was specified as "verify timers are not throttled",
+which cannot be done at startup.** Timing an interval on the tab that was just
+opened false-positives, because the navigation to whatnot.com destroys the
+interval mid-count. Timing one on a scratch tab proves nothing, because
+throttling only applies to *background* tabs after several minutes — it
+reported success even with the flags deliberately stripped. It now reads
+`chrome://version` and checks the flags Chrome was actually launched with,
+which is a thing that can be known at startup.
+
+**The spec said the panel was optional and probably unnecessary.** It was
+built, and the selector editor turned out to be the strongest argument for it:
+previewing a pattern against a live page immediately caught the default prize
+pattern capturing "with 37 entries" out of "Giveaway with 37 entries". A wrong
+prize in a push title is worse than none, so the default now requires a colon
+and yields nothing otherwise.
+
+**`\d+` was not good enough for entry counts.** It fails to match "1,234"
+outright, so a large giveaway was not merely miscounted but invisible — no
+notification at all, and the biggest giveaways are exactly the ones with
+formatted numbers. Grouped and abbreviated forms are handled now.
+
+**Chrome is not always in Program Files.** A Windows install without admin
+rights lands in LOCALAPPDATA. Reported as "Chrome not found" on a machine
+that obviously has Chrome.
 
 ## Open questions, collected
 
 1. Does Chrome ignore `--remote-debugging-port` on the default profile?
 2. Does the purchases page update live, or need a reload?
-3. Exact selectors for: giveaway present, prize name, entry count, buyers-only,
-   followers-only. Requires probing a real live stream — phase 1.
-4. Does a background tab hold presence for hours with the keep-alive flags?
-   Expected yes; only an overnight run proves it.
+3. Exact selectors for: prize name, buyers-only, followers-only. Only
+   `Giveaway with N entries` is known real — it is what the old radar matched
+   for weeks. The rest need probing against a live stream, which is what the
+   panel's detection card is for.
+4. Does a background tab hold presence with the keep-alive flags? Expected
+   yes; only a real run proves it.
 
 ## Honest assessment
 

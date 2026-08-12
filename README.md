@@ -170,7 +170,8 @@ git.
 - `python watch.py` — one command: starts the browser if needed, attaches,
   watches. `probe` dumps what it sees, `test` sends a notification.
 - `python control.py start|stop|status` — run it without the panel.
-- `python test_watcher.py` — tests, stdlib `unittest`, under a second.
+- `python test_watcher.py` — 23 tests, stdlib `unittest`, under a second.
+  Every case is a defect that actually happened.
 - `selectors.json` — all detection, editable by hand or from the panel.
 - The panel binds `config.panel_host` (default loopback) on port 8766.
 - Reads the DOM, not the WebSocket: a socket already open when it attaches is
@@ -178,3 +179,13 @@ git.
   `SPEC.md` for what was measured.
 - Deliberately unsupported: entering giveaways, and fingerprint spoofing. It
   doesn't pass `--enable-automation`; it also doesn't mask anything.
+
+| file | |
+|---|---|
+| `watch.py` | reads your tabs and notifies. `watch`, `probe`, `test` |
+| `chrome.py` | finds and starts the browser, and checks it looks ordinary |
+| `web.py` | the panel |
+| `control.py` | start/stop without the panel |
+| `notify.py` | Bark / ntfy |
+| `selectors.json` | **the fragile part** — all detection |
+| `SPEC.md` | the design, what was measured, and what the spec got wrong |
