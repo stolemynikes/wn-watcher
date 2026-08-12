@@ -102,7 +102,7 @@ is completely fine.
 |---|---|---|
 | 🎁 **prize name** | A giveaway just started | Tap it, enter in the app |
 | 🎁 **giveaway** (no name) | Started, but the banner was collapsed so the title wasn't on screen | Same — tap it |
-| 🏆 **You won!** | A free item appeared on your purchases page | Check Whatnot |
+| 🏆 **You won!** | A free item appeared on your purchases page | Tap it — it opens the stream you won it in |
 | 🛒 **Purchase** | Something you paid for appeared there | — |
 | ⚠️ **Challenge on a tab** | Whatnot is showing a robot check in one tab | Close that tab, or solve it yourself |
 | ⚠️ **Watcher may be blind** | It hasn't recognised anything for a while | See below |
@@ -124,6 +124,11 @@ giveaway win costs €0.00, which is how it's told apart from something you
 bought — more reliable than looking for the word "giveaway", which paid
 listings use too. It only notices new rows *after* you start it, so your
 history stays quiet.
+
+The win notification opens **the stream you won it in**, by matching the item
+back to the giveaway it announced earlier. When it can't be certain which
+stream — a vague title, or one that looks like another seller's — it points at
+your purchases page instead. A generic link beats the wrong seller.
 
 **Sound is muted.** Six live streams at once is unbearable otherwise. Whatnot
 can't tell — the mute is applied inside Chrome, below anything a web page can

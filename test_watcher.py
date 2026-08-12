@@ -197,6 +197,57 @@ Download Purchase History"""
                                                {"purchases": {"row": "([bad"}}), [])
 
 
+class LinkingAWinToItsStream(unittest.TestCase):
+    """The purchases row has no link, so a win is matched back to the giveaway
+    we announced. Sending you to the wrong seller is worse than sending you to
+    your purchases page, so a weak match must not be used."""
+
+    def setUp(self):
+        import time
+        self.now = time.time()
+        self.mem = {
+            "https://wn/live/aaa": {
+                "prize": "🎁 FREE BOOSTER PACK + FREE SHIPPING 📦 #16",
+                "at": self.now},
+            "https://wn/live/bbb": {
+                "prize": "GIVVY 8 (pls bookmark our shows)", "at": self.now},
+        }
+
+    def match(self, title):
+        return watch.match_stream(title, self.mem, self.now)
+
+    def test_exact_title_finds_the_stream(self):
+        self.assertEqual(self.match("GIVVY 8 (pls bookmark our shows)"),
+                         "https://wn/live/bbb")
+
+    def test_emoji_and_punctuation_do_not_break_it(self):
+        self.assertEqual(self.match("FREE BOOSTER PACK + FREE SHIPPING #16"),
+                         "https://wn/live/aaa")
+
+    def test_a_different_sellers_similar_title_is_refused(self):
+        # Real pair: this is a DIFFERENT seller's giveaway that shares the
+        # words free, shipping and #16. Guessing here would send you to the
+        # wrong stream.
+        self.assertIsNone(self.match("`FREE PACKS & SHIPPING TWV €4,06 #16"))
+
+    def test_an_unrelated_purchase_matches_nothing(self):
+        self.assertIsNone(self.match("GEM VOL 5 BOOSTERBOX (18 PACKS)"))
+
+    def test_stale_giveaways_are_not_matched(self):
+        old = {"https://wn/live/ccc": {"prize": "GIVVY 8 (pls bookmark our shows)",
+                                       "at": self.now - watch.WIN_MEMORY_SECONDS - 1}}
+        self.assertIsNone(
+            watch.match_stream("GIVVY 8 (pls bookmark our shows)", old, self.now))
+
+    def test_memory_is_pruned(self):
+        state = {"recent_giveaways": dict(self.mem)}
+        state["recent_giveaways"]["https://wn/live/old"] = {
+            "prize": "x", "at": self.now - watch.WIN_MEMORY_SECONDS - 1}
+        watch.prune_state(state)
+        self.assertNotIn("https://wn/live/old", state["recent_giveaways"])
+        self.assertEqual(len(state["recent_giveaways"]), 2)
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""

@@ -48,6 +48,15 @@ def load_json(path: Path, fallback=None):
         return fallback
 
 
+def prune_state(state: dict) -> None:
+    """Forget giveaways older than the window a win could plausibly relate to,
+    so a long run does not grow state.json without bound."""
+    cutoff = time.time() - WIN_MEMORY_SECONDS
+    recent = state.get("recent_giveaways", {})
+    for url in [u for u, i in recent.items() if i.get("at", 0) < cutoff]:
+        del recent[url]
+
+
 def save_state(state: dict) -> None:
     tmp = STATE_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -318,6 +327,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     notifier = notify.make_notifier(cfg)
     state = load_json(STATE_PATH, {})
     state.setdefault("seen_purchases", {})
+    # url -> {prize, at}. Lets a win be traced back to its stream.
+    state.setdefault("recent_giveaways", {})
     poll = max(1, int(cfg.get("poll_seconds", 2)))
     confirm = max(1, int(cfg.get("confirm_polls", 2)))
     silence_after = max(0, int(cfg.get("silence_warning_minutes", 45))) * 60
@@ -373,7 +384,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 tracker = trackers.setdefault(url, TabTracker(confirm))
                 event = tracker.update(reading, signature(url, reading))
                 if event == "started":
-                    announce_giveaway(notifier, url, reading)
+                    announce_giveaway(notifier, url, reading,
+                                      state["recent_giveaways"])
                 elif event == "ended":
                     log(f"giveaway ended — {url}")
 
@@ -400,6 +412,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 except Exception:
                     pass
 
+            prune_state(state)
             save_state(state)
             time.sleep(poll)
     except KeyboardInterrupt:
@@ -414,7 +427,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
         pw.stop()
 
 
-def announce_giveaway(notifier, url: str, reading: dict) -> None:
+def announce_giveaway(notifier, url: str, reading: dict,
+                      remember: dict | None = None) -> None:
     prize = reading.get("prize") or "giveaway"
     entries = reading.get("entries")
     eligible = reading.get("eligible")
@@ -433,12 +447,64 @@ def announce_giveaway(notifier, url: str, reading: dict) -> None:
         bits.append("eligibility unknown")
     detail = " · ".join(bits)
 
+    if remember is not None and reading.get("prize"):
+        # Kept so a win can be traced back to the stream it came from — the
+        # purchases row has no link of its own.
+        remember[url] = {"prize": reading["prize"], "at": time.time()}
     log(f"GIVEAWAY — {prize} {('(' + detail + ')') if detail else ''} — {url}")
     try:
         notifier.send(f"🎁 {prize} 🎁", detail or "Tap to enter.", url,
                       priority="max", group="giveaways")
     except Exception as exc:
         log(f"notification failed ({exc.__class__.__name__}) — will retry")
+
+
+
+# --- linking a win back to the stream it came from --------------------------
+#
+# The purchases row carries no link: just a status, a title, a price and a
+# date. But we announced that giveaway ourselves minutes earlier and knew the
+# stream URL then, so remember it and match the win back by title.
+#
+# Conservative on purpose. Sending you to the WRONG seller's stream is worse
+# than sending you to your purchases page, so a weak match is not used at all.
+
+WIN_MEMORY_SECONDS = 4 * 3600
+
+
+def normalise_title(title: str) -> list:
+    """Comparable tokens: lowercase words and #numbers, plurals folded."""
+    cleaned = re.sub(r"[^\w#]+", " ", (title or "").lower())
+    out = []
+    for tok in cleaned.split():
+        if len(tok) < 2 and not tok.startswith("#"):
+            continue
+        out.append(tok[:-1] if len(tok) > 3 and tok.endswith("s") else tok)
+    return out
+
+
+def title_similarity(a: str, b: str) -> float:
+    ta, tb = set(normalise_title(a)), set(normalise_title(b))
+    if not ta or not tb:
+        return 0.0
+    return len(ta & tb) / len(ta | tb)
+
+
+def match_stream(title: str, remembered: dict, now: float,
+                 threshold: float = 0.6):
+    """The stream URL a win most likely came from, or None.
+
+    None is a perfectly good answer — the notification then points at your
+    purchases page, which is always correct if less convenient.
+    """
+    best, best_score = None, 0.0
+    for url, info in remembered.items():
+        if now - info.get("at", 0) > WIN_MEMORY_SECONDS:
+            continue
+        score = title_similarity(title, info.get("prize", ""))
+        if score > best_score:
+            best, best_score = url, score
+    return best if best_score >= threshold else None
 
 
 def parse_purchases(text: str, sel: dict) -> list:
@@ -485,12 +551,23 @@ def check_purchases(page, sel: dict, state: dict, notifier) -> None:
         # First sight would otherwise announce your entire purchase history.
         if not state.get("purchases_seeded"):
             continue
+        # Point a win at the stream it came from, so the notification behaves
+        # like the giveaway one did. Falls back to the purchases page whenever
+        # the match is not clear-cut: the wrong seller's stream would be worse
+        # than a generic link.
+        link = f"{BASE_URL}/?activityTab=purchases"
+        where = ""
+        if row["won"]:
+            match = match_stream(row["title"], state.get("recent_giveaways", {}),
+                                 time.time())
+            if match:
+                link, where = match, " — tap to open the stream"
         log(f"{'WIN' if row['won'] else 'purchase'} — {row['title'][:70]} "
-            f"(€{row['price']:.2f}, {row['status']})")
+            f"(€{row['price']:.2f}, {row['status']}){where}")
         try:
             notifier.send(
                 "🏆 You won! 🏆" if row["won"] else "🛒 Purchase 🛒",
-                row["title"][:160], f"{BASE_URL}/?activityTab=purchases",
+                row["title"][:160], link,
                 priority="max" if row["won"] else "default", group="results")
         except Exception as exc:
             log(f"notification failed ({exc.__class__.__name__})")
