@@ -126,37 +126,82 @@ REACT_PROBE = r"""(pattern) => {
         return out;
     }
 
-    // Anchor on the element whose text is the collapsed banner.
-    let anchor = null;
-    for (const el of document.querySelectorAll('section, article, div')) {
-        const strong = el.querySelector('strong');
-        if (strong && re.test(strong.textContent || '')) { anchor = el; break; }
+    // Anchor on the <strong> that actually holds the banner text. The first
+    // attempt matched any element CONTAINING it, which in document order is
+    // the whole sidebar — so it walked up and away from the giveaway
+    // component and found nothing but page scaffolding.
+    let strong = null;
+    for (const el of document.querySelectorAll('strong, span, p, div')) {
+        if (el.children.length === 0 && re.test(el.textContent || '')) { strong = el; break; }
     }
-    if (!anchor) return {found: false};
-
     const results = [];
-    let node = anchor, level = 0;
-    while (node && level < 8) {
-        for (const key of Object.keys(node)) {
-            if (key.startsWith('__reactProps')) {
-                const p = safe(node[key], 0);
-                if (p && Object.keys(p).length) results.push({at: level, from: 'props', data: p});
-            } else if (key.startsWith('__reactFiber')) {
-                let fiber = node[key], up = 0;
-                while (fiber && up < 8) {
-                    if (fiber.memoizedProps) {
-                        const p = safe(fiber.memoizedProps, 0);
-                        if (p && Object.keys(p).length)
-                            results.push({at: level, from: 'fiber+' + up, data: p});
+
+    if (strong) {
+        let node = strong, level = 0;
+        while (node && level < 6) {
+            for (const key of Object.keys(node)) {
+                if (!key.startsWith('__react')) continue;
+                if (key.startsWith('__reactProps')) {
+                    const d = safe(node[key], 0);
+                    if (d && Object.keys(d).length)
+                        results.push({at: level, from: 'props', data: d});
+                } else if (key.startsWith('__reactFiber')) {
+                    let f = node[key], up = 0;
+                    while (f && up < 15) {          // was 8, and 8 was not enough
+                        if (f.memoizedProps) {
+                            const d = safe(f.memoizedProps, 0);
+                            if (d && Object.keys(d).length)
+                                results.push({at: level, from: 'fiber+' + up, data: d});
+                        }
+                        f = f.return; up++;
                     }
-                    fiber = fiber.return; up++;
                 }
             }
+            node = node.parentElement; level++;
         }
-        node = node.parentElement; level++;
     }
-    return {found: true, tag: anchor.tagName, html: anchor.outerHTML.slice(0, 600),
-            results: results.slice(0, 60)};
+
+    // The decisive test: sweep the WHOLE React tree for anything
+    // giveaway-shaped, wherever it lives. If the data is in the app at all
+    // while the banner is folded, this finds it.
+    const WORDS = /giveaway|prize|eligib|buyerappreciation|onlyfollowers|qualif/i;
+    const sweep = [];
+    let root = null;
+    for (const el of [document.body, ...document.body.children]) {
+        for (const k of Object.keys(el)) {
+            if (k.startsWith('__reactContainer') || k.startsWith('__reactFiber')) {
+                root = el[k]; break;
+            }
+        }
+        if (root) break;
+    }
+    if (root) {
+        const stack = [root.current || root];
+        let visited = 0;
+        while (stack.length && visited < 40000 && sweep.length < 25) {
+            const f = stack.pop();
+            if (!f) continue;
+            visited++;
+            const props = f.memoizedProps;
+            if (props && typeof props === 'object') {
+                let text = '';
+                try { text = JSON.stringify(props, (k, v) =>
+                    (typeof v === 'object' && v !== null && Object.keys(v).length > 40)
+                        ? '…' : v).slice(0, 4000); } catch (e) {}
+                if (WORDS.test(text)) {
+                    const name = (f.type && (f.type.displayName || f.type.name)) || f.elementType || '';
+                    sweep.push({component: String(name).slice(0, 60), data: safe(props, 0)});
+                }
+            }
+            if (f.child) stack.push(f.child);
+            if (f.sibling) stack.push(f.sibling);
+        }
+    }
+
+    return {found: !!strong, foundRoot: !!root,
+            tag: strong ? strong.tagName : null,
+            text: strong ? (strong.textContent || '').slice(0, 120) : null,
+            results: results.slice(0, 40), sweep: sweep};
 }"""
 
 
@@ -460,22 +505,34 @@ def cmd_probe_react(cfg: dict, sel: dict) -> None:
             if not found.get("found"):
                 print("  no collapsed giveaway banner on this tab — is one running?")
                 continue
+            print(f"  anchored on <{found.get('tag')}>: "
+                  f"{(found.get('text') or '').strip()[:60]!r}")
             results = found.get("results", [])
-            print(f"  {len(results)} React prop set(s) found on/above the banner")
-            hits = []
-            for r in results:
-                blob = json.dumps(r["data"], ensure_ascii=False).lower()
-                for word in INTERESTING:
-                    if word in blob:
-                        hits.append((r["from"], word))
-                        break
-            if hits:
-                print("  promising ones:")
-                for src, word in hits[:12]:
-                    print(f"    {src:12} contains '{word}'")
+            sweep = found.get("sweep", [])
+            print(f"  {len(results)} prop set(s) around the banner, "
+                  f"{len(sweep)} giveaway-shaped component(s) in the whole tree")
+            if sweep:
+                print("  THE ANSWER — components holding giveaway data:")
+                for hit in sweep[:10]:
+                    keys = ", ".join(list((hit.get("data") or {}).keys())[:8])
+                    print(f"    {hit['component'][:34]:36} {keys[:70]}")
             else:
-                print("  nothing obviously giveaway-shaped — the click may be "
-                      "the only way")
+                hits = []
+                for r in results:
+                    blob = json.dumps(r["data"], ensure_ascii=False).lower()
+                    for word in INTERESTING:
+                        if word in blob:
+                            hits.append((r["from"], word))
+                            break
+                if hits:
+                    print("  near the banner:")
+                    for src, word in hits[:12]:
+                        print(f"    {src:12} contains '{word}'")
+                else:
+                    print("  nothing giveaway-shaped anywhere in the React tree "
+                          "— clicking may be the only way")
+            if not found.get("foundRoot"):
+                print("  ! could not find a React root — the sweep did not run")
     finally:
         try:
             browser.close()
