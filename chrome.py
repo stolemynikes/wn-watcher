@@ -90,11 +90,20 @@ def port_open(port: int, host: str = "127.0.0.1") -> bool:
         return False
 
 
-def build_command(chrome: str, port: int, profile: Path) -> list:
+def build_command(chrome: str, port: int, profile: Path,
+                  mute: bool = True) -> list:
+    """The launch line. Note what is NOT here: --enable-automation.
+
+    --mute-audio is safe to add. Measured 2026-08-12: with it set, a page still
+    reports video.muted false, its volume unchanged and AudioContext running —
+    the mute happens in Chrome's audio pipeline, below anything JavaScript can
+    observe. Six live streams at once is otherwise unbearable.
+    """
     return [chrome,
             f"--remote-debugging-port={port}",
             f"--user-data-dir={profile}",
             *KEEP_ALIVE_FLAGS,
+            *(["--mute-audio"] if mute else []),
             "--no-first-run", "--no-default-browser-check",
             "https://www.whatnot.com/"]
 
@@ -180,7 +189,8 @@ def ensure_running(cfg: dict) -> bool:
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"\n  Starting Chrome on port {port}")
     print(f"  Profile: {PROFILE_DIR}")
-    subprocess.Popen(build_command(chrome, port, PROFILE_DIR),
+    subprocess.Popen(build_command(chrome, port, PROFILE_DIR,
+                                   bool(cfg.get("mute_audio", True))),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     for _ in range(30):

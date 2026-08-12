@@ -134,7 +134,7 @@ def attached_tabs(cfg: dict) -> dict:
                 entry["kind"] = "purchases"
             elif "/live/" in url:
                 entry["kind"] = "live"
-                entry["reading"] = watch.read_live_tab(text, sel)
+                entry["reading"] = watch.read_live_tab(text, sel, info.get("domText", ""))
             tabs.append(entry)
     finally:
         try:

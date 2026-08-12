@@ -43,10 +43,6 @@ class ReadingAPage(unittest.TestCase):
         self.assertTrue(r["challenge"])
         self.assertFalse(r["present"])
 
-    def test_buyers_only_is_flagged(self):
-        r = self.read("Giveaway with 5 entries\nBuyer appreciation giveaway")
-        self.assertTrue(r["buyers_only"])
-
     def test_big_giveaways_are_still_detected(self):
         # \\d+ alone failed outright on a grouped number — so a giveaway with
         # 1,234 entries was invisible, and those are the big ones.
@@ -66,14 +62,15 @@ class ReadingAPage(unittest.TestCase):
         self.assertFalse(self.read("140 watching · 12k followers")["present"])
 
     def test_prize_does_not_capture_the_entry_wording(self):
-        # The first default matched "Giveaway with 37 entries" and called the
-        # prize "with 37 entries". A wrong prize in the push title is worse
-        # than none, so the pattern requires a colon.
+        # An early guess matched "Giveaway with 37 entries" and called the
+        # prize "with 37 entries". A wrong prize is worse than none.
         self.assertEqual(self.read("Giveaway with 37 entries")["prize"], "")
 
-    def test_prize_is_read_when_the_page_actually_names_one(self):
-        r = self.read("Giveaway with 5 entries\nGiveaway: Booster Box")
-        self.assertEqual(r["prize"], "Booster Box")
+    def test_prize_is_the_line_after_the_count(self):
+        # Confirmed against the live site: the banner has no "Prize:" label,
+        # the title is simply the next line down.
+        r = self.read("Giveaway with 5 entries\nCharizard ETB")
+        self.assertEqual(r["prize"], "Charizard ETB")
 
     def test_a_broken_pattern_does_not_crash(self):
         broken = {"live": {"giveaway_present": "Giveaway with \\d+ entr",
@@ -81,6 +78,58 @@ class ReadingAPage(unittest.TestCase):
         r = watch.read_live_tab("Giveaway with 3 entries", broken)
         self.assertTrue(r["present"])
         self.assertIsNone(r["entries"])
+
+
+class TheRealBanner(unittest.TestCase):
+    """Transcribed from screenshots of the live site, 2026-08-12. These are the
+    only fixtures here that are known real rather than invented."""
+
+    COLLAPSED = "Giveaway with 6 entries\nChat  Watching\nOhhhhhhh"
+    NOT_ELIGIBLE = ("Giveaway with 11 entries\ntb 3\nNot eligible\n"
+                    "Terms & Conditions\nChat  Watching")
+    ENTERABLE = ("Giveaway with 78 entries\n"
+                 "🎁 FREE BOOSTER PACK + FREE SHIPPING 📦 #16\n"
+                 "Open Mobile App To Enter\nTerms & Conditions\nChat")
+    NO_GIVEAWAY = "tcgcardsheaven 5.0\n241\nChat  Watching\nGood luck"
+
+    def read(self, text, dom=""):
+        return watch.read_live_tab(text, SELECTORS, dom)
+
+    def test_collapsed_banner_still_detects_the_giveaway(self):
+        r = self.read(self.COLLAPSED)
+        self.assertTrue(r["present"])
+        self.assertEqual(r["entries"], 6)
+
+    def test_collapsed_means_eligibility_unknown_not_ineligible(self):
+        # Conflating these would silence real giveaways.
+        self.assertIsNone(self.read(self.COLLAPSED)["eligible"])
+
+    def test_not_eligible_is_read_from_the_page(self):
+        r = self.read(self.NOT_ELIGIBLE)
+        self.assertIs(r["eligible"], False)
+        self.assertEqual(r["prize"], "tb 3")
+
+    def test_enterable_is_read_from_the_page(self):
+        r = self.read(self.ENTERABLE)
+        self.assertIs(r["eligible"], True)
+        self.assertIn("FREE BOOSTER PACK", r["prize"])
+        self.assertEqual(r["entries"], 78)
+
+    def test_prize_never_captures_the_eligibility_line(self):
+        for text in (self.NOT_ELIGIBLE, self.ENTERABLE, self.COLLAPSED):
+            with self.subTest(text=text[:30]):
+                self.assertNotIn("eligible", self.read(text)["prize"].lower())
+                self.assertNotIn("Open Mobile App", self.read(text)["prize"])
+
+    def test_collapsed_prize_comes_from_the_dom_when_it_is_there(self):
+        # The title is what you actually want in the push, and collapsed it is
+        # not on screen — but the page has often already built the node.
+        r = self.read(self.COLLAPSED, dom="Giveaway with 6 entries\ntb 3\nNot eligible")
+        self.assertEqual(r["prize"], "tb 3")
+
+    def test_a_stream_with_no_giveaway_stays_quiet(self):
+        r = self.read(self.NO_GIVEAWAY)
+        self.assertFalse(r["present"])
 
 
 class Signature(unittest.TestCase):

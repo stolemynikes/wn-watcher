@@ -101,12 +101,25 @@ is completely fine.
 | You see | It means | Do |
 |---|---|---|
 | 🎁 **prize name** | A giveaway just started | Tap it, enter in the app |
+| 🎁 **giveaway** (no name) | Started, but the banner was collapsed so the title wasn't on screen | Same — tap it |
 | 🏆 **You won!** | Something new appeared on your purchases page | Check Whatnot |
 | ⚠️ **Challenge on a tab** | Whatnot is showing a robot check in one tab | Close that tab, or solve it yourself |
 | ⚠️ **Watcher may be blind** | It hasn't recognised anything for a while | See below |
 
-Buyers-only giveaways aren't pushed, since you can't enter those without buying
-in that show.
+**Giveaways you can't enter are not pushed.** The page says so itself — a
+buyers giveaway you haven't bought into shows *"Not eligible"*, and that one
+stays quiet. Anything it can't be sure about, it tells you about: a missed
+giveaway costs an entry, an extra buzz costs nothing.
+
+**The prize name needs the banner open.** Collapsed, the giveaway box in the
+top right shows only "Giveaway with N entries" — the title isn't on screen, so
+the alert just says "giveaway". Click the banner open in a stream and the name
+comes through. It also tries to read the title straight out of the page even
+when collapsed, which often works.
+
+**Sound is muted.** Six live streams at once is unbearable otherwise. Whatnot
+can't tell — the mute is applied inside Chrome, below anything a web page can
+see. Set `mute_audio` to `false` in `config.json` if you want it back.
 
 ---
 

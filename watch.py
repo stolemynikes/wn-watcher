@@ -63,7 +63,14 @@ def save_state(state: dict) -> None:
 PAGE_TEXT = """() => ({
     url: location.href,
     title: document.title,
-    text: (document.body && document.body.innerText || '').slice(0, 20000)
+    text: (document.body && document.body.innerText || '').slice(0, 20000),
+    // innerText is what is RENDERED. The giveaway banner is collapsed by
+    // default, so the prize line is not in it. textContent includes nodes the
+    // page has built but is not showing, which is often enough to read the
+    // title without touching anything. Used only as a fallback for the prize,
+    // never for presence or eligibility: those must reflect what is really on
+    // screen.
+    domText: (document.body && document.body.textContent || '').slice(0, 40000)
 })"""
 
 ROWS_JS = """(sel) => Array.from(document.querySelectorAll(sel))
@@ -121,20 +128,46 @@ def parse_count(raw) -> int | None:
     return int(s) if s.isdigit() else None
 
 
-def read_live_tab(text: str, sel: dict) -> dict:
-    """Turn a stream tab's visible text into a giveaway reading."""
+def read_prize(live: dict, text: str, dom_text: str = "") -> str:
+    """The prize name, from the visible text if possible, the DOM if not.
+
+    Collapsed, the banner shows only the entry count — so on screen there is no
+    title to read. If the page has built the node anyway, textContent has it.
+    If it has not, this returns "" and the alert says "giveaway", which is the
+    honest outcome rather than a guess.
+    """
+    return (first_group(live.get("prize"), text)
+            or (first_group(live.get("prize"), dom_text) if dom_text else None)
+            or "")
+
+
+def read_live_tab(text: str, sel: dict, dom_text: str = "") -> dict:
+    """Turn a stream tab's text into a giveaway reading.
+
+    `text` is what is on screen; `dom_text` may additionally contain nodes the
+    page has built but collapsed. Only the prize falls back to the second one.
+    """
     live = sel.get("live", {})
     if matches(live.get("challenge"), text):
         return {"challenge": True, "present": False}
     present = matches(live.get("giveaway_present"), text)
     entries = parse_count(first_group(live.get("entries"), text))
+    # Tri-state on purpose. The banner is collapsed by default, and collapsed it
+    # shows only the entry count — the prize and the eligibility line are not on
+    # screen at all. None means "we cannot see", which is not the same as "you
+    # cannot enter", and the two must not be conflated.
+    eligible = None
+    if present:
+        if matches(live.get("not_eligible"), text):
+            eligible = False
+        elif matches(live.get("enterable"), text):
+            eligible = True
     return {
         "challenge": False,
         "present": present,
-        "prize": (first_group(live.get("prize"), text) or "") if present else "",
-        "entries": entries,
-        "buyers_only": present and matches(live.get("buyers_only"), text),
-        "followers_only": present and matches(live.get("followers_only"), text),
+        "prize": (read_prize(live, text, dom_text) if present else ""),
+        "entries": entries if present else None,
+        "eligible": eligible,
     }
 
 
@@ -145,7 +178,7 @@ def signature(url: str, reading: dict) -> str:
     the first by its prize. Entry count is deliberately NOT part of this: it
     changes every few seconds and would make every poll a new giveaway.
     """
-    return f"{url}|{reading.get('prize', '')}|{int(bool(reading.get('buyers_only')))}"
+    return f"{url}|{reading.get('prize', '')}|{reading.get('eligible')}"
 
 
 class TabTracker:
@@ -256,7 +289,7 @@ def cmd_probe(cfg: dict, sel: dict) -> None:
                     print("    (nothing — send me the page text below so I can "
                           "fix row_selector)")
             else:
-                reading = read_live_tab(text, sel)
+                reading = read_live_tab(text, sel, info.get("domText", ""))
                 print("\n  pattern            result")
                 for name in ("giveaway_present", "entries", "prize",
                              "buyers_only", "followers_only", "challenge"):
@@ -315,7 +348,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     continue
 
                 live_urls.add(url)
-                reading = read_live_tab(text, sel)
+                reading = read_live_tab(text, sel, info.get("domText", ""))
 
                 if reading["challenge"]:
                     if url not in challenged:
@@ -384,17 +417,21 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 def announce_giveaway(notifier, url: str, reading: dict) -> None:
     prize = reading.get("prize") or "giveaway"
     entries = reading.get("entries")
+    eligible = reading.get("eligible")
+
+    # Only silence a giveaway the page has explicitly said you cannot enter.
+    # Unknown (a collapsed banner) is announced: a missed giveaway costs an
+    # entry, a redundant buzz costs nothing.
+    if eligible is False:
+        log(f"not eligible, staying quiet — {prize} — {url}")
+        return
+
     bits = []
     if entries is not None:
         bits.append(f"{entries} entries")
-    if reading.get("followers_only"):
-        bits.append("followers only")
+    if eligible is None:
+        bits.append("eligibility unknown")
     detail = " · ".join(bits)
-
-    if reading.get("buyers_only"):
-        # Not enterable without buying in that show, so it is noted, not pushed.
-        log(f"buyers-only giveaway (not alerting) — {prize} — {url}")
-        return
 
     log(f"GIVEAWAY — {prize} {('(' + detail + ')') if detail else ''} — {url}")
     try:
