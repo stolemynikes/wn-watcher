@@ -1,0 +1,17 @@
+{
+  "notifier": "bark",
+  "bark_key": "",
+  "ntfy_topic": "CHANGE-ME-long-random-string",
+  "ntfy_server": "https://ntfy.sh",
+
+  "debug_port": 9222,
+  "poll_seconds": 2,
+
+  "_comment_confirm": "How many consecutive polls a giveaway must be visible before alerting. 2 rides out a half-rendered frame without costing real time.",
+  "confirm_polls": 2,
+
+  "_comment_silence": "Warn if no tab has matched anything for this long — the silent failure of this design is Whatnot changing their markup.",
+  "silence_warning_minutes": 45,
+
+  "watch_purchases": true
+}
