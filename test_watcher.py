@@ -46,6 +46,24 @@ class ReadingAPage(unittest.TestCase):
         r = self.read("Giveaway with 5 entries\nBuyer appreciation giveaway")
         self.assertTrue(r["buyers_only"])
 
+    def test_big_giveaways_are_still_detected(self):
+        # \\d+ alone failed outright on a grouped number — so a giveaway with
+        # 1,234 entries was invisible, and those are the big ones.
+        for text, expected in [("Giveaway with 1 entry", 1),
+                               ("Giveaway with 402 entries", 402),
+                               ("Giveaway with 1,234 entries", 1234),
+                               ("Giveaway with 1.234 entries", 1234),
+                               ("Giveaway with 1 234 entries", 1234),
+                               ("Giveaway with 12k entries", 12000),
+                               ("Giveaway with 1.5k entries", 1500)]:
+            with self.subTest(text=text):
+                r = self.read(text)
+                self.assertTrue(r["present"], "presence matters more than the count")
+                self.assertEqual(r["entries"], expected)
+
+    def test_a_number_elsewhere_is_not_a_giveaway(self):
+        self.assertFalse(self.read("140 watching · 12k followers")["present"])
+
     def test_prize_does_not_capture_the_entry_wording(self):
         # The first default matched "Giveaway with 37 entries" and called the
         # prize "with 37 entries". A wrong prize in the push title is worse

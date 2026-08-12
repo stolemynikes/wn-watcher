@@ -11,8 +11,8 @@
   ],
   "live": {
     "_note": "giveaway_present is the only REQUIRED one. It is the string the old radar already matched successfully, so it is known real. The rest are best guesses until probed against a live stream — see SPEC open question 3.",
-    "giveaway_present": "Giveaway with \\d+ entr",
-    "entries": "Giveaway with (\\d+) entr",
+    "giveaway_present": "Giveaway with [\\d.,\\s  ]*\\d\\s*k? entr",
+    "entries": "Giveaway with ([\\d.,\\s  ]*\\d\\s*k?) entr",
     "_note_prize": "Requires a colon on purpose. Without it this matched 'Giveaway with 37 entries' and captured 'with 37 entries' as the prize name. Better to show nothing than something wrong — if it never matches you just get a generic title. Fix it here once probe shows how the page really names the prize.",
     "prize": "Giveaway:\\s*(.{3,80}?)\\s*(?:\\n|$)",
     "_note_flags": "Unconfirmed. If these never match, buyers-only giveaways will alert like any other — annoying, not harmful.",
@@ -20,7 +20,8 @@
     "followers_only": "followers only|follow to enter|following to enter",
     "seller": "^@?([A-Za-z0-9_.-]{3,30})\\s*$",
     "_note_challenge": "Matched the same way the radar does it. A challenged tab is skipped, never reloaded.",
-    "challenge": "just a moment|attention required|checking your browser|verify you are human|enable javascript and cookies to continue"
+    "challenge": "just a moment|attention required|checking your browser|verify you are human|enable javascript and cookies to continue",
+    "_note_counts": "The count is not always a bare integer: 1,234 in English, 1.234 in Dutch, a thin space, or 12k when the UI shortens it. The old \\d+ failed to match those outright, which hid the whole giveaway — and the biggest giveaways are exactly the ones with formatted numbers."
   },
   "purchases": {
     "_note": "SPEC open question 2. Rows are read with a CSS selector because innerText alone gives no row boundaries. The default is a guess; run `python watch.py probe` with the purchases tab open and send the output if it finds nothing.",

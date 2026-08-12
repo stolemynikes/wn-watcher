@@ -93,18 +93,46 @@ def matches(pattern, text) -> bool:
         return False
 
 
+def parse_count(raw) -> int | None:
+    """Turn whatever the page wrote into a number.
+
+    Big giveaways are where the count stops being a bare integer: "1,234" in
+    English, "1.234" in Dutch, "1 234" with a thin space, "12k" when the UI
+    shortens it. Both separators are treated as grouping — the count is
+    informational, and being off by a factor is better than the pattern
+    failing to match, which used to hide the whole giveaway.
+    """
+    if raw is None:
+        return None
+    s = re.sub(r"[\s  ]", "", str(raw))
+    thousands = s[-1:].lower() == "k"
+    if thousands:
+        s = s[:-1]
+    if not s:
+        return None
+    if thousands:
+        # "1.5k" is a decimal; "1,5k" is the same thing written elsewhere.
+        s = s.replace(",", ".")
+        try:
+            return int(float(s) * 1000)
+        except ValueError:
+            return None
+    s = s.replace(",", "").replace(".", "")
+    return int(s) if s.isdigit() else None
+
+
 def read_live_tab(text: str, sel: dict) -> dict:
     """Turn a stream tab's visible text into a giveaway reading."""
     live = sel.get("live", {})
     if matches(live.get("challenge"), text):
         return {"challenge": True, "present": False}
     present = matches(live.get("giveaway_present"), text)
-    entries = first_group(live.get("entries"), text)
+    entries = parse_count(first_group(live.get("entries"), text))
     return {
         "challenge": False,
         "present": present,
         "prize": (first_group(live.get("prize"), text) or "") if present else "",
-        "entries": int(entries) if (entries or "").isdigit() else None,
+        "entries": entries,
         "buyers_only": present and matches(live.get("buyers_only"), text),
         "followers_only": present and matches(live.get("followers_only"), text),
     }
