@@ -9,6 +9,7 @@ without needing a browser or a live stream.
 """
 
 import json
+import os
 import pathlib
 import sys
 import unittest
@@ -147,6 +148,45 @@ class Tracker(unittest.TestCase):
         events = self.feed(t, [{"present": True, "prize": "Box", "entries": n}
                                for n in range(1, 30)])
         self.assertEqual(events.count("started"), 1)
+
+
+class FindingChrome(unittest.TestCase):
+    """Installing Chrome without admin rights on Windows puts it under
+    LOCALAPPDATA, nowhere near Program Files — the same trap that made the
+    radar think Tailscale wasn't installed."""
+
+    def setUp(self):
+        import chrome
+        self.chrome = chrome
+        self.env = dict(os.environ)
+        self.real_is_file = pathlib.Path.is_file
+        self.addCleanup(setattr, pathlib.Path, "is_file", self.real_is_file)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(self.env)))
+
+    def only(self, existing):
+        pathlib.Path.is_file = lambda self: str(self) == existing
+
+    def test_finds_a_per_user_windows_install(self):
+        os.environ["LOCALAPPDATA"] = r"C:\Users\x\AppData\Local"
+        target = next(c for c in self.chrome.chrome_candidates() if "AppData" in c)
+        self.only(target)
+        self.assertEqual(self.chrome.find_chrome(), target)
+
+    def test_program_files_is_read_from_the_environment(self):
+        # Not always on C:.
+        os.environ["ProgramFiles"] = r"D:\Programs"
+        self.assertTrue(any(c.startswith(r"D:\Programs")
+                            for c in self.chrome.chrome_candidates()))
+
+    def test_missing_chrome_returns_none_rather_than_raising(self):
+        self.only("/definitely/not/here")
+        import shutil as _sh
+        real_which = _sh.which
+        _sh.which = lambda n: None
+        try:
+            self.assertIsNone(self.chrome.find_chrome())
+        finally:
+            _sh.which = real_which
 
 
 class SelectorsFile(unittest.TestCase):

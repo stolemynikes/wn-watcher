@@ -20,6 +20,7 @@ Two things it must get right, both measured 2026-08-12:
 """
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -37,20 +38,36 @@ KEEP_ALIVE_FLAGS = [
     "--disable-renderer-backgrounding",
 ]
 
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
-    "/opt/google/chrome/google-chrome",
-    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-]
+
+def chrome_candidates():
+    """Where Chrome actually lives, built at call time.
+
+    Windows needs more than two hardcoded paths. Installing Chrome without
+    admin rights — which is what happens on a locked-down or work machine —
+    puts it under LOCALAPPDATA and nowhere near Program Files. And Program
+    Files itself is not always on C:, so it is read from the environment
+    rather than assumed. This is the same trap that made the radar think
+    Tailscale was not installed.
+    """
+    out = ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+           "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable",
+           "/opt/google/chrome/google-chrome",
+           "/snap/bin/chromium", "/usr/bin/chromium-browser"]
+    suffix = Path("Google") / "Chrome" / "Application" / "chrome.exe"
+    for var in ("LOCALAPPDATA", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        if (root := os.environ.get(var)):
+            out.append(str(Path(root) / suffix))
+    return out
 
 
 def find_chrome():
-    for path in CHROME_CANDIDATES:
-        if Path(path).is_file():
-            return str(path)
-    for name in ("google-chrome", "google-chrome-stable", "chrome"):
+    for path in chrome_candidates():
+        try:
+            if Path(path).is_file():
+                return str(path)
+        except OSError:
+            continue
+    for name in ("google-chrome", "google-chrome-stable", "chrome", "chrome.exe"):
         if (found := shutil.which(name)):
             return found
     return None
@@ -156,8 +173,8 @@ def ensure_running(cfg: dict) -> bool:
 
     chrome = find_chrome()
     if not chrome:
-        print("  Google Chrome not found. Install it, or edit "
-              "CHROME_CANDIDATES in chrome.py.")
+        print("  Google Chrome not found. Install it from google.com/chrome, "
+              "or add its path to chrome_candidates() in chrome.py.")
         return False
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
