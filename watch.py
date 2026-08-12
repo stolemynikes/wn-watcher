@@ -194,6 +194,38 @@ def read_live_tab(text: str, sel: dict, dom_text: str = "",
     }
 
 
+
+def expand_giveaway(page, sel: dict) -> bool:
+    """Click the collapsed giveaway banner open. Opt-in, and off by default.
+
+    This is the only thing in the tool that touches a page. Collapsed, the
+    prize and the eligibility line are genuinely absent from the DOM — the
+    section holds nothing but the header row — so no amount of reading gets
+    them; a click is the only route.
+
+    Measured: the click is indistinguishable at the event level. isTrusted is
+    true, and with the keep-alive flags even a background tab reports itself
+    visible and focused. What is NOT measured, and cannot be from here, is
+    whether Whatnot minds the pattern: a click with no mouse movement before
+    it, at the instant a giveaway appears, across several tabs at once.
+
+    Kept narrow on purpose — one click, on the chevron inside the section that
+    holds the giveaway text, once per giveaway. It never touches anything else,
+    and it never touches an entry button.
+    """
+    selector = (sel.get("live") or {}).get("expand_button")
+    if not selector:
+        return False
+    try:
+        button = page.locator(selector).first
+        if button.count() == 0:
+            return False
+        button.click(timeout=2000)
+        return True
+    except Exception:
+        return False          # not there, not clickable, already open
+
+
 def signature(url: str, reading: dict) -> str:
     """Identity of a giveaway, for deduping.
 
@@ -351,6 +383,11 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
     pw, browser = attach(int(cfg.get("debug_port", 9222)))
     trackers, challenged, warned_tabs = {}, set(), set()
+    expanded = set()          # tabs whose banner we have already asked to open
+    may_expand = bool(cfg.get("expand_giveaway", False))
+    if may_expand:
+        log("expand_giveaway is ON — this will click the banner open, which is "
+            "the one thing here that touches a page")
     last_match = time.monotonic()
     warned_silent = False
     log("attached — watching your tabs. Nothing here opens or closes them.")
@@ -396,6 +433,19 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 if reading["present"]:
                     last_match = time.monotonic()
                     warned_silent = False
+
+                # Opt-in, once per giveaway: if it is folded shut there is
+                # nothing to read, so ask for it to be opened and pick the
+                # detail up on the next poll.
+                if (may_expand and reading["present"] and not reading["prize"]
+                        and reading["eligible"] is None
+                        and url not in expanded):
+                    expanded.add(url)
+                    if expand_giveaway(page, sel):
+                        log(f"opened the giveaway panel on {url}")
+                        continue          # read it properly next tick
+                if not reading["present"]:
+                    expanded.discard(url)
 
                 tracker = trackers.setdefault(url, TabTracker(confirm))
                 event = tracker.update(reading, signature(url, reading))

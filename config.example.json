@@ -7,6 +7,8 @@
   "poll_seconds": 2,
   "_comment_mute": "Six streams at once is unbearable otherwise. Measured safe: --mute-audio is applied in Chrome's audio pipeline and is invisible to the page — video.muted, volume and AudioContext.state are all unchanged.",
   "mute_audio": true,
+  "_comment_expand": "OFF by default, and think before turning it on. Collapsed, the banner shows only the entry count — the prize and the eligibility line are not in the page at all, so the only way to read them is to click it open. The click itself is indistinguishable (isTrusted is true); what is not is the pattern — no mouse movement before it, fired the instant a giveaway appears, on several tabs at once. It also turns a tool that only reads into one that acts. Whatnot usually unfolds the banner itself on a new giveaway, which is when it matters, so try without this first.",
+  "expand_giveaway": false,
   "_comment_confirm": "How many consecutive polls a giveaway must be visible before alerting. 2 rides out a half-rendered frame without costing real time.",
   "confirm_polls": 2,
   "_comment_silence": "Warn if no tab has matched anything for this long — the silent failure of this design is Whatnot changing their markup.",

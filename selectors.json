@@ -22,7 +22,9 @@
     "_note_eligibility": "The page says outright whether you can enter, which beats inferring it. 'Not eligible' is a buyers giveaway you have not bought into. 'Open Mobile App To Enter' means you can. Neither present = collapsed banner, so we do not know — and we notify, because a missed giveaway costs more than a redundant buzz.",
     "not_eligible": "Not eligible",
     "enterable": "Open Mobile App To Enter",
-    "_note_seller": "Only a fallback. The seller is normally taken from their profile link in the page, which is unambiguous — reading it out of the text is unreliable because every line of chat is a username too."
+    "_note_seller": "Only a fallback. The seller is normally taken from their profile link in the page, which is unambiguous — reading it out of the text is unreliable because every line of chat is a username too.",
+    "_note_expand": "Only used when expand_giveaway is switched on in config.json. Locates the collapsed banner by its own text — the button has no id, test hook or stable class, only 'cursor-pointer', so the section holding 'Giveaway with N entries' is the anchor.",
+    "expand_button": "section:has(strong:text-matches(\"Giveaway with [\\\\d.,\\\\s]*\\\\d\\\\s*k? entr\", \"i\")) button"
   },
   "purchases": {
     "_note": "Confirmed against a real screenshot 2026-08-12. The activity panel opens over the home page at ?activityTab=purchases, and each row has a rigid shape: a status badge, the title, 'Purchased: €x.xx', then 'Date: d/m/yyyy'. Parsed from text rather than a CSS selector — the shape is stable, class names are not.",

@@ -143,6 +143,19 @@ back to the giveaway it announced earlier. When it can't be certain which
 stream — a vague title, or one that looks like another seller's — it points at
 your purchases page instead. A generic link beats the wrong seller.
 
+**Reading the prize when the banner is folded shut.** Collapsed, that box
+shows only "Giveaway with N entries" — the title and the eligibility line are
+not merely hidden, they aren't in the page at all. Whatnot normally unfolds it
+by itself when a giveaway starts, which is the moment that matters, so most of
+the time you get everything.
+
+If you want it to fold the banner open itself, set `expand_giveaway` to `true`
+in `config.json`. **It's off by default and worth a thought first.** It's the
+only thing here that touches a page rather than reading it. The click is
+indistinguishable from a real one, but the *pattern* isn't: no mouse movement
+before it, fired the instant a giveaway appears, on several tabs at once.
+Nothing measured says Whatnot minds — equally, nothing says it doesn't.
+
 **Sound is muted.** Six live streams at once is unbearable otherwise. Whatnot
 can't tell — the mute is applied inside Chrome, below anything a web page can
 see. Set `mute_audio` to `false` in `config.json` if you want it back.
