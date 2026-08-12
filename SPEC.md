@@ -153,6 +153,68 @@ instead of a code change.
 
 Selectors live in `selectors.json`, not in code, for the same reason.
 
+## What Whatnot actually runs — measured 2026-08-13
+
+Read out of a live page's own React state, from `watch.py react`. Whatnot
+ships these bot-detection fields to the client, by name:
+
+```
+playwright_bot     synthetics_bot     user_agent_is_bot
+bot_score          is_allowed_bot     is_verified_bot
+```
+
+alongside `kasada_gql_request_protection` and `web_kasada_ready_check_logging`.
+
+Two things follow.
+
+**They use Kasada**, a dedicated anti-bot vendor, not only Cloudflare. Kasada
+fingerprints the client and scores it; the "just a moment" pages are the
+visible end of something more thorough than an IP reputation check.
+
+**They have a detection field named after Playwright specifically.** The old
+radar drove Chrome with `navigator.webdriver === true`, which against a system
+carrying a `playwright_bot` flag is about as loud as a signal gets. That is the
+best explanation yet for why it kept being challenged while ordinary browsing
+from the same machine was fine.
+
+The values were null in the payload we captured, so this says what they
+measure, not what score we get. But it is why this tool is built the way it
+is: real Chrome, no `--enable-automation`, `navigator.webdriver === false`,
+zero automated navigation. Not politeness — the difference between being
+scored as a browser and scored as a robot.
+
+It also settles the standing rule against anything that makes traffic "look
+human". Against a vendor doing behavioural fingerprinting, a half-hearted
+imitation is worse than none: it turns an honest tool into one caught lying.
+
+## Reading the giveaway: what is and is not possible
+
+Settled after three probes, and the answer is no.
+
+The banner folds shut on every new giveaway, and collapsed it contains only
+the header row — the prize and the eligibility line are absent from the DOM,
+not merely hidden. So `textContent` cannot reach them.
+
+Nor can React. A walk over the giveaway component's entire subtree — 52
+components — found no `prize`, `isEligible`, `buyerAppreciation`,
+`onlyFollowers` or `entryCount` anywhere in props or hook state. The component
+literally named `giveaway` is an SVG icon; the stateful ones nearby hold
+auction context. That dump was taken with the banner EXPANDED, which makes it
+conclusive: if the data is not structured in React with the panel open, it is
+certainly not there with it shut. The prize exists only as rendered text.
+
+Clicking the banner open is therefore the only way to read a title or an
+eligibility flag. **Decided 2026-08-13: we do not click.** The feature exists
+behind `expand_giveaway`, off by default, and stays off. Roughly seventy
+clicks an hour across six tabs, each with no mouse movement before it and
+fired the instant a giveaway appears, is not a pattern worth buying a prize
+name with — least of all against Kasada.
+
+What this costs, stated plainly: every alert reads "🎁 Giveaway — seller" with
+no prize name, and giveaways you cannot enter are not filtered out, because
+nothing on screen says so. Seller, stream link and timing are unaffected, and
+those are what get you into the draw.
+
 ## What it deliberately does not do
 
 - **Never enters a giveaway.** Detection and notification only, as now.
@@ -219,10 +281,10 @@ that obviously has Chrome.
 
 1. Does Chrome ignore `--remote-debugging-port` on the default profile?
 2. Does the purchases page update live, or need a reload?
-3. Exact selectors for: prize name, buyers-only, followers-only. Only
-   `Giveaway with N entries` is known real — it is what the old radar matched
-   for weeks. The rest need probing against a live stream, which is what the
-   panel's detection card is for.
+3. ANSWERED. Confirmed from screenshots: the prize is the line under the
+   count, and the page states eligibility itself — "Not eligible", or "Open
+   Mobile App To Enter". Both are only present when the banner is expanded,
+   which it is not. See above.
 4. Does a background tab hold presence with the keep-alive flags? Expected
    yes; only a real run proves it.
 

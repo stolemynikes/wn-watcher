@@ -7,7 +7,7 @@
   "poll_seconds": 2,
   "_comment_mute": "Six streams at once is unbearable otherwise. Measured safe: --mute-audio is applied in Chrome's audio pipeline and is invisible to the page — video.muted, volume and AudioContext.state are all unchanged.",
   "mute_audio": true,
-  "_comment_expand": "OFF by default, and think before turning it on. Collapsed, the banner shows only the entry count — the prize and the eligibility line are not in the page at all, so the only way to read them is to click it open. The click itself is indistinguishable (isTrusted is true); what is not is the pattern — no mouse movement before it, fired the instant a giveaway appears, on several tabs at once. It also turns a tool that only reads into one that acts. Whatnot usually unfolds the banner itself on a new giveaway, which is when it matters, so try without this first.",
+  "_comment_expand": "Leave this false. Decided 2026-08-13 after probing a live page: the prize and eligibility exist nowhere but rendered text, and the banner is folded shut, so a click is the only way to read them. Not worth it — Whatnot runs Kasada and ships a bot-detection field literally named playwright_bot, and ~70 unprompted clicks an hour is a pattern. The switch is kept because the finding might change; the default is the decision. See SPEC.md.",
   "expand_giveaway": false,
   "_comment_confirm": "How many consecutive polls a giveaway must be visible before alerting. 2 rides out a half-rendered frame without costing real time.",
   "confirm_polls": 2,

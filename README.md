@@ -149,12 +149,15 @@ not merely hidden, they aren't in the page at all. Whatnot normally unfolds it
 by itself when a giveaway starts, which is the moment that matters, so most of
 the time you get everything.
 
-If you want it to fold the banner open itself, set `expand_giveaway` to `true`
-in `config.json`. **It's off by default and worth a thought first.** It's the
-only thing here that touches a page rather than reading it. The click is
-indistinguishable from a real one, but the *pattern* isn't: no mouse movement
-before it, fired the instant a giveaway appears, on several tabs at once.
-Nothing measured says Whatnot minds — equally, nothing says it doesn't.
+**So alerts say "🎁 Giveaway — seller" without the prize name, and giveaways
+you can't enter aren't filtered out.** That's deliberate. Reading either one
+needs the banner clicked open, and we don't click: Whatnot runs Kasada and
+ships a bot-detection field named `playwright_bot`, so around seventy
+unprompted clicks an hour isn't worth a prize name. The seller, the link and
+the timing — the things that get you into the draw — are unaffected.
+
+There's an `expand_giveaway` switch in `config.json` if you ever disagree. It
+is off, and `SPEC.md` explains why.
 
 **Sound is muted.** Six live streams at once is unbearable otherwise. Whatnot
 can't tell — the mute is applied inside Chrome, below anything a web page can
