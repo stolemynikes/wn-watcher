@@ -3,6 +3,7 @@
 
     python watch.py            # start the browser if needed, then watch
     python watch.py probe      # dump what it can see, and fix nothing
+    python watch.py react      # can the prize be read WITHOUT opening the banner?
     python watch.py test       # send a test notification
 
 One command. It starts the browser if it isn't already up, attaches, and then
@@ -95,6 +96,68 @@ PAGE_TEXT = r"""() => ({
 ROWS_JS = """(sel) => Array.from(document.querySelectorAll(sel))
     .map(e => (e.innerText || '').replace(/\\s+/g, ' ').trim())
     .filter(Boolean)"""
+
+
+# React keeps a component's props on the DOM node itself, under keys like
+# __reactProps$abc123. If Whatnot's giveaway component holds the prize and the
+# eligibility flag in its props, they are readable while the banner is still
+# folded shut — no click, no event, nothing dispatched. This dumps whatever is
+# there so we can find out.
+REACT_PROBE = r"""(pattern) => {
+    const re = new RegExp(pattern, 'i');
+    const seen = new WeakSet();
+
+    function safe(value, depth) {
+        if (depth > 4 || value === null || value === undefined) return null;
+        const t = typeof value;
+        if (t === 'string') return value.length > 300 ? value.slice(0, 300) + '…' : value;
+        if (t === 'number' || t === 'boolean') return value;
+        if (t !== 'object') return undefined;
+        if (value instanceof Node || value instanceof Window) return undefined;
+        if (seen.has(value)) return undefined;
+        seen.add(value);
+        if (Array.isArray(value)) return value.slice(0, 8).map(v => safe(v, depth + 1));
+        const out = {};
+        for (const k of Object.keys(value).slice(0, 60)) {
+            if (k === 'children' || k === '_owner' || k === '_store') continue;
+            const v = safe(value[k], depth + 1);
+            if (v !== undefined) out[k] = v;
+        }
+        return out;
+    }
+
+    // Anchor on the element whose text is the collapsed banner.
+    let anchor = null;
+    for (const el of document.querySelectorAll('section, article, div')) {
+        const strong = el.querySelector('strong');
+        if (strong && re.test(strong.textContent || '')) { anchor = el; break; }
+    }
+    if (!anchor) return {found: false};
+
+    const results = [];
+    let node = anchor, level = 0;
+    while (node && level < 8) {
+        for (const key of Object.keys(node)) {
+            if (key.startsWith('__reactProps')) {
+                const p = safe(node[key], 0);
+                if (p && Object.keys(p).length) results.push({at: level, from: 'props', data: p});
+            } else if (key.startsWith('__reactFiber')) {
+                let fiber = node[key], up = 0;
+                while (fiber && up < 8) {
+                    if (fiber.memoizedProps) {
+                        const p = safe(fiber.memoizedProps, 0);
+                        if (p && Object.keys(p).length)
+                            results.push({at: level, from: 'fiber+' + up, data: p});
+                    }
+                    fiber = fiber.return; up++;
+                }
+            }
+        }
+        node = node.parentElement; level++;
+    }
+    return {found: true, tag: anchor.tagName, html: anchor.outerHTML.slice(0, 600),
+            results: results.slice(0, 60)};
+}"""
 
 
 def first_group(pattern, text, default=None):
@@ -359,6 +422,74 @@ def cmd_probe(cfg: dict, sel: dict) -> None:
     finally:
         browser.close()
         pw.stop()
+
+
+REACT_DUMP_PATH = PROJECT_DIR / "probe-react.json"
+
+INTERESTING = ("giveaway", "prize", "eligib", "buyer", "follow", "title",
+               "name", "entr", "qualif", "reward", "product")
+
+
+def cmd_probe_react(cfg: dict, sel: dict) -> None:
+    """Can the prize and eligibility be read WITHOUT opening the banner?
+
+    Whatnot is a React app, and React hangs a component's props off the DOM
+    node. If the collapsed banner's component already knows what it is holding,
+    those props have the answer and nothing needs clicking.
+
+    Writes everything to probe-react.json — the interesting part is likely to
+    be a nested blob, too big to read off a terminal.
+    """
+    pw, browser = attach(int(cfg.get("debug_port", 9222)))
+    pattern = (sel.get("live") or {}).get("giveaway_present", "Giveaway with")
+    dumps = []
+    try:
+        pages = [p for p in whatnot_pages(browser) if "/live/" in p.url]
+        if not pages:
+            print("\n  No stream tabs open. Open one with a giveaway running.\n")
+            return
+        for page in pages:
+            try:
+                found = page.evaluate(REACT_PROBE, pattern)
+            except Exception as exc:
+                print(f"  ! {page.url}: {exc.__class__.__name__}")
+                continue
+            dumps.append({"url": page.url, **found})
+            print("=" * 72)
+            print(f"  {page.url}")
+            if not found.get("found"):
+                print("  no collapsed giveaway banner on this tab — is one running?")
+                continue
+            results = found.get("results", [])
+            print(f"  {len(results)} React prop set(s) found on/above the banner")
+            hits = []
+            for r in results:
+                blob = json.dumps(r["data"], ensure_ascii=False).lower()
+                for word in INTERESTING:
+                    if word in blob:
+                        hits.append((r["from"], word))
+                        break
+            if hits:
+                print("  promising ones:")
+                for src, word in hits[:12]:
+                    print(f"    {src:12} contains '{word}'")
+            else:
+                print("  nothing obviously giveaway-shaped — the click may be "
+                      "the only way")
+    finally:
+        try:
+            browser.close()
+        except Exception:
+            pass
+        pw.stop()
+
+    REACT_DUMP_PATH.write_text(json.dumps(dumps, indent=2, ensure_ascii=False),
+                               encoding="utf-8")
+    print("=" * 72)
+    print(f"\n  Full dump written to {REACT_DUMP_PATH.name} — send me that file.")
+    print("  Run it once with the banner FOLDED (that is the real question),")
+    print("  then open the banner and run it again so there is something to")
+    print("  compare against.\n")
 
 
 def cmd_test(cfg: dict) -> None:
@@ -649,7 +780,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", nargs="?", default="watch",
-                    choices=["watch", "probe", "test"])
+                    choices=["watch", "probe", "react", "test"])
     args = ap.parse_args()
 
     cfg = chrome.load_config()          # creates it from the example if absent
@@ -657,6 +788,8 @@ def main() -> None:
 
     if args.command == "probe":
         cmd_probe(cfg, sel)
+    elif args.command == "react":
+        cmd_probe_react(cfg, sel)
     elif args.command == "test":
         cmd_test(cfg)
     else:

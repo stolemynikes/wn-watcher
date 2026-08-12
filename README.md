@@ -220,7 +220,8 @@ git.
 ## For technical users
 
 - `python watch.py` — one command: starts the browser if needed, attaches,
-  watches. `probe` dumps what it sees, `test` sends a notification.
+  watches. `probe` dumps what it sees, `react` checks whether the prize is
+  readable without opening the banner, `test` sends a notification.
 - `python control.py start|stop|status` — run it without the panel.
 - `python test_watcher.py` — 23 tests, stdlib `unittest`, under a second.
   Every case is a defect that actually happened.

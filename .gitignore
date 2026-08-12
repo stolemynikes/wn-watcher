@@ -6,3 +6,4 @@ chrome-profile/
 __pycache__/
 watcher.log
 .watcher.pid
+probe-react.json
