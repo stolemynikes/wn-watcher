@@ -588,8 +588,13 @@ def serve(host: str, port: int) -> None:
     # timeout_graceful_shutdown is the difference between Ctrl+C working and
     # appearing to hang: the open panel page holds a keep-alive connection and
     # uvicorn otherwise waits for it forever.
+    # lifespan="off": this app registers no startup or shutdown handlers, and
+    # leaving the protocol on means every Ctrl+C prints a CancelledError
+    # traceback from starlette's lifespan task — after the panel has already
+    # stopped cleanly. Noise that reads exactly like a crash.
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port,
                                            log_level="warning",
+                                           lifespan="off",
                                            timeout_graceful_shutdown=3))
     if platform.system() != "Windows":
         try:
