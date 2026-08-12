@@ -1,4 +1,10 @@
-# Deliberately small. This tool attaches to a browser you launched; it never
+# Small on purpose: this attaches to a browser you launched, it never
 # downloads or drives one of its own.
 playwright>=1.40,<2
 requests>=2.31,<3
+psutil>=5.9,<8
+
+# Panel only. Skip these and the command line still works.
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+qrcode>=7.4,<9

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Start the Chrome that the watcher attaches to.
+"""The Chrome the watcher attaches to — finding it, starting it, checking it.
 
-    python launch.py
-
-Deliberately a separate step from watching. This browser is yours: you open
-the streams, you close them, and nothing else ever navigates it.
+Used by watch.py, which starts this browser itself if it isn't already up, so
+there is only ever one command to run. This browser is yours: you open the
+streams, you close them, and nothing else ever navigates it.
 
 Two things it must get right, both measured 2026-08-12:
 
@@ -103,34 +102,63 @@ def verify(port: int) -> list:
                 problems.append(
                     "navigator.webdriver is TRUE — this browser is announcing "
                     "itself as automated. Something passed --enable-automation.")
-            # A 200ms interval should tick ~10 times in 2s. Throttled, it ticks
-            # once or not at all.
-            page.evaluate("window.__t = 0; setInterval(() => window.__t++, 200)")
-            time.sleep(2)
-            ticks = page.evaluate("window.__t")
-            if ticks < 5:
-                problems.append(
-                    f"timers are being throttled ({ticks} ticks in 2s) — "
-                    "background tabs may stop holding your giveaway entries.")
+
+            # Read the flags Chrome was actually started with, rather than
+            # trying to observe throttling. Two earlier attempts were worse:
+            # timing an interval on the startup tab false-positived (the
+            # navigation to whatnot.com destroys the interval mid-count), and
+            # timing one on a scratch tab proves nothing at all, because
+            # throttling only applies to BACKGROUND tabs after several
+            # minutes. chrome://version lists the real command line, so ask it.
+            probe = ctx.new_page()
+            try:
+                probe.goto("chrome://version")
+                probe.wait_for_timeout(600)
+                cmdline = probe.evaluate("document.body.innerText") or ""
+            except Exception:
+                cmdline = ""
+            finally:
+                probe.close()
+
+            if not cmdline:
+                problems.append("could not read chrome://version to confirm "
+                                "the keep-alive flags")
+            else:
+                missing = [f for f in KEEP_ALIVE_FLAGS if f not in cmdline]
+                if missing:
+                    problems.append(
+                        "this Chrome was started without "
+                        + ", ".join(missing) +
+                        " — background tabs will be throttled after a few "
+                        "minutes and may stop holding your giveaway entries. "
+                        "Quit Chrome and let this start it.")
+                if "enable-automation" in cmdline:
+                    problems.append(
+                        "--enable-automation is set — that is what makes "
+                        "navigator.webdriver true.")
             browser.close()
     except Exception as exc:
         problems.append(f"could not attach to check ({exc.__class__.__name__})")
     return problems
 
 
-def main() -> None:
-    cfg = load_config()
+def ensure_running(cfg: dict) -> bool:
+    """Start the browser unless it is already up. Returns True if usable.
+
+    Safe to call every time: an already-running browser is left completely
+    alone, so restarting the watcher never disturbs the tabs you have open.
+    """
     port = int(cfg.get("debug_port", 9222))
 
     if port_open(port):
-        print(f"\n  Chrome is already listening on {port}. Leaving it alone.")
-        print("  Open the streams you want, then run:  python watch.py\n")
-        return
+        print(f"  Chrome already running on port {port} — leaving it alone.")
+        return True
 
     chrome = find_chrome()
     if not chrome:
-        sys.exit("Google Chrome not found. Install it, or edit "
-                 "CHROME_CANDIDATES in launch.py.")
+        print("  Google Chrome not found. Install it, or edit "
+              "CHROME_CANDIDATES in chrome.py.")
+        return False
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
     print(f"\n  Starting Chrome on port {port}")
@@ -143,8 +171,9 @@ def main() -> None:
             break
         time.sleep(0.5)
     else:
-        sys.exit("Chrome did not open the debug port. Is another Chrome using "
-                 "this profile already?")
+        print("  Chrome did not open its debug port. Is another Chrome already "
+              "using this profile?")
+        return False
 
     print("  Checking it looks like an ordinary browser...")
     problems = verify(port)
@@ -154,13 +183,13 @@ def main() -> None:
             print(f"    - {p}")
         print("\n  Fix these before relying on it.\n")
     else:
-        print("    navigator.webdriver = False, timers not throttled — good.\n")
+        print("    webdriver flag absent, keep-alive flags present — good.\n")
 
     print("  This browser is yours. First time: log in to Whatnot.")
-    print("  Then open the streams you want, plus the purchases tab:")
-    print("    https://www.whatnot.com/?activityTab=purchases")
-    print("\n  When your tabs are open:  python watch.py\n")
+    print("  Open the streams you want, plus optionally the purchases tab:")
+    print("    https://www.whatnot.com/?activityTab=purchases\n")
+    return True
 
 
 if __name__ == "__main__":
-    main()
+    ensure_running(load_config())

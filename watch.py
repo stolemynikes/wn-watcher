@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Watch the Whatnot tabs YOU opened, and buzz your phone on a giveaway.
 
-    python watch.py            # watch
+    python watch.py            # start the browser if needed, then watch
     python watch.py probe      # dump what it can see, and fix nothing
     python watch.py test       # send a test notification
 
-It attaches to the Chrome that launch.py started and reads the pages. It never
+One command. It starts the browser if it isn't already up, attaches, and then
+waits — you open your streams whenever you like, before or after, and it picks
+them up. Reading the page rather than the socket is what allows that. It never
 navigates, opens, closes or reloads a tab. Entering a giveaway is always
 yours to do by hand — that is Whatnot's rule and this tool does not bend it.
 
@@ -23,6 +25,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import chrome
 import notify
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -168,8 +171,7 @@ def attach(port: int):
         pw.stop()
         raise SystemExit(
             f"Could not attach to Chrome on port {port} "
-            f"({exc.__class__.__name__}).\n"
-            "Start it first with:  python launch.py")
+            f"({exc.__class__.__name__}).")
     return pw, browser
 
 
@@ -250,6 +252,8 @@ def cmd_test(cfg: dict) -> None:
 
 
 def cmd_watch(cfg: dict, sel: dict) -> None:
+    if not chrome.ensure_running(cfg):
+        sys.exit("Could not get a browser up. Nothing was changed.")
     notifier = notify.make_notifier(cfg)
     state = load_json(STATE_PATH, {})
     state.setdefault("seen_purchases", {})
@@ -405,10 +409,7 @@ def main() -> None:
                     choices=["watch", "probe", "test"])
     args = ap.parse_args()
 
-    cfg = load_json(CONFIG_PATH, None) if CONFIG_PATH.exists() else None
-    if cfg is None:
-        sys.exit("config.json not found — run `python launch.py` once, it "
-                 "creates one.")
+    cfg = chrome.load_config()          # creates it from the example if absent
     sel = load_json(SELECTORS_PATH)
 
     if args.command == "probe":

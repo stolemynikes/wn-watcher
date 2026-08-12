@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whatnot-watcher</title>
+<style>
+  :root{
+    --deep:#050506; --base:#0A0A0F; --glass:rgba(255,255,255,.045);
+    --glass-2:rgba(255,255,255,.07); --hair:rgba(255,255,255,.09);
+    --ink:#EDEDEF; --muted:#8A8F98;
+    --ok:#22C55E; --warn:#F59E0B; --bad:#FF5F57; --accent:#5E6AD2; --gold:#FBBF24;
+    --r:16px; --ez:cubic-bezier(.16,1,.3,1); --t:220ms var(--ez);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono","Fira Code",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0; min-height:100%}
+  body{
+    background:var(--deep); color:var(--ink); font:15px/1.55 var(--mono);
+    -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+    overflow-x:hidden;
+  }
+  /* ambient light the glass refracts — the whole look depends on this.
+     Held in a clipping layer: the blobs are wider than a phone and sit at
+     negative offsets, and overflow-x on <body> does NOT clip position:fixed
+     children — without this the page scrolls sideways on mobile. */
+  .bg{position:fixed; inset:0; overflow:hidden; pointer-events:none; z-index:0}
+  .blob{position:absolute; border-radius:50%; filter:blur(90px); opacity:.16}
+  .b1{width:520px; height:520px; background:#5E6AD2; top:-160px; left:-140px;
+      animation:drift1 28s ease-in-out infinite}
+  .b2{width:440px; height:440px; background:#22C55E; bottom:-180px; right:-100px;
+      opacity:.10; animation:drift2 34s ease-in-out infinite}
+  .b3{width:380px; height:380px; background:#A855F7; top:40%; right:12%;
+      opacity:.09; animation:drift1 40s ease-in-out infinite reverse}
+  @keyframes drift1{50%{transform:translate(70px,60px) scale(1.12)}}
+  @keyframes drift2{50%{transform:translate(-60px,-50px) scale(1.08)}}
+
+  /* ---------- chrome ---------- */
+  header{position:sticky; top:0; z-index:30;
+         background:linear-gradient(180deg,rgba(10,10,15,.85),rgba(10,10,15,.55));
+         backdrop-filter:blur(18px) saturate(160%);
+         -webkit-backdrop-filter:blur(18px) saturate(160%);
+         border-bottom:1px solid var(--hair)}
+  .hbar{max-width:980px; margin:0 auto; padding:12px 16px;
+        display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+  .lights{display:flex; gap:7px; margin-right:2px}
+  .lights i{width:11px; height:11px; border-radius:50%; display:block}
+  .lights i:nth-child(1){background:#FF5F57} .lights i:nth-child(2){background:#FEBC2E}
+  .lights i:nth-child(3){background:#28C840}
+  h1{font-size:13px; font-weight:500; margin:0; color:var(--muted); letter-spacing:.02em}
+  h1 b{color:var(--ink); font-weight:600}
+  .status{display:inline-flex; align-items:center; gap:7px; padding:5px 11px;
+          border:1px solid var(--hair); border-radius:999px; font-size:12px;
+          background:var(--glass); backdrop-filter:blur(10px)}
+  .status.on{border-color:rgba(34,197,94,.45); color:var(--ok);
+             box-shadow:0 0 18px rgba(34,197,94,.14)}
+  .status.off{color:var(--muted)}
+  .dot{width:7px; height:7px; border-radius:50%; background:currentColor; flex:none}
+  .status.on .dot{animation:blink 2s ease-in-out infinite}
+  @keyframes blink{50%{opacity:.3}}
+  .spacer{flex:1}
+
+  main{position:relative; z-index:1; max-width:980px; margin:0 auto;
+       padding:16px; display:grid; gap:14px}
+  .grid{display:grid; gap:14px; grid-template-columns:repeat(2,minmax(0,1fr))}
+  @media (max-width:780px){ .grid{grid-template-columns:1fr} }
+  /* Grid and flex children default to min-width:auto, so a nowrap element
+     (the long ssh commands) forces the whole page wider than the viewport and
+     the page scrolls sideways. Let them shrink so inner overflow-x works. */
+  main > *, .grid > *, .cmd > *, .alert > *{min-width:0}
+  /* Long commands live inside .alert > div > ol > li > .cmd. Every one of
+     those is a block that happily grows to its widest nowrap child, so a
+     180-character PowerShell line pushed the card 279px past the window and
+     took all the copy buttons off-screen with it. Let them wrap here: these
+     are commands to copy, not text to read across. */
+  .alert code, li .cmd code{white-space:pre-wrap; overflow-wrap:anywhere}
+  .alert ol{margin:8px 0 0; padding-left:20px}
+  .alert li{max-width:100%}
+
+  /* ---------- glass cards ---------- */
+  .card{position:relative; border-radius:var(--r); padding:16px;
+        background:var(--glass); border:1px solid var(--hair);
+        backdrop-filter:blur(22px) saturate(150%);
+        -webkit-backdrop-filter:blur(22px) saturate(150%);
+        box-shadow:0 8px 32px rgba(0,0,0,.38),
+                   inset 0 1px 0 rgba(255,255,255,.06);
+        transition:border-color var(--t), box-shadow var(--t)}
+  .card::after{content:''; position:absolute; inset:0 0 auto; height:1px;
+               border-radius:var(--r) var(--r) 0 0;
+               background:linear-gradient(90deg,transparent,rgba(255,255,255,.16),transparent)}
+  .card.ready{border-color:rgba(34,197,94,.32);
+              box-shadow:0 8px 32px rgba(0,0,0,.38),
+                         inset 0 1px 0 rgba(255,255,255,.06),
+                         0 0 0 1px rgba(34,197,94,.12), 0 0 26px rgba(34,197,94,.07)}
+  .card.todo{border-color:rgba(245,158,11,.28)}
+  .card h2{display:flex; align-items:center; gap:8px; margin:0 0 12px;
+           font-size:11px; font-weight:600; letter-spacing:.12em;
+           text-transform:uppercase; color:var(--muted)}
+  .card h2::before{content:'$'; color:var(--accent); font-weight:700}
+  .badge{margin-left:auto; font-size:11px; font-weight:600; padding:3px 9px;
+         border-radius:999px; border:1px solid var(--hair); color:var(--muted);
+         letter-spacing:.04em; text-transform:none}
+  .badge.ok{color:var(--ok); border-color:rgba(34,197,94,.4); background:rgba(34,197,94,.1)}
+  .badge.todo{color:var(--warn); border-color:rgba(245,158,11,.4); background:rgba(245,158,11,.1)}
+
+  .saved{font-size:12.5px; color:var(--muted); margin:12px 0 0;
+         display:flex; align-items:center; gap:7px}
+  .saved b{color:var(--ink); font-weight:600}
+  .hint{font-size:11.5px; color:var(--muted); margin:8px 0 0; line-height:1.5}
+
+  /* ---------- controls ---------- */
+  .row{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  button{min-height:42px; padding:0 15px; border-radius:11px; cursor:pointer;
+         font:600 13px/1 var(--mono); letter-spacing:.02em; color:var(--ink);
+         background:var(--glass-2); border:1px solid var(--hair);
+         backdrop-filter:blur(10px); transition:all var(--t);
+         touch-action:manipulation}
+  button:hover:not(:disabled){background:rgba(255,255,255,.12);
+         border-color:rgba(255,255,255,.2); transform:translateY(-1px)}
+  button:active:not(:disabled){transform:scale(.975)}
+  button.primary{background:linear-gradient(180deg,#6b77e0,#5E6AD2);
+         border-color:rgba(255,255,255,.16); color:#fff;
+         box-shadow:0 4px 18px rgba(94,106,210,.35)}
+  button.danger{color:var(--bad); border-color:rgba(255,95,87,.34);
+                background:rgba(255,95,87,.08)}
+  button.danger:hover:not(:disabled){background:rgba(255,95,87,.16)}
+  button.sm{min-height:34px; padding:0 12px; font-size:12px}
+  button:disabled{opacity:.35; cursor:not-allowed}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:8px}
+
+  label.f{display:flex; flex-direction:column; gap:6px; font-size:11px;
+          letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
+  input,select{min-height:42px; border-radius:11px; padding:0 12px; font-size:16px;
+        font-family:var(--mono); color:var(--ink);
+        background:rgba(0,0,0,.32); border:1px solid var(--hair);
+        transition:border-color var(--t), box-shadow var(--t)}
+  input:focus,select:focus{outline:none; border-color:rgba(94,106,210,.7);
+        box-shadow:0 0 0 3px rgba(94,106,210,.16)}
+  input::placeholder{color:#5b616e}
+
+  /* country / option chips — replaces the native multi-select */
+  .chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:8px}
+  .chip{display:inline-flex; align-items:center; gap:6px; min-height:38px;
+        padding:0 13px; border-radius:999px; font-size:12.5px; font-weight:550;
+        cursor:pointer; color:var(--muted); background:rgba(255,255,255,.04);
+        border:1px solid var(--hair); transition:all var(--t);
+        user-select:none; touch-action:manipulation}
+  .chip:hover{border-color:rgba(255,255,255,.2); color:var(--ink)}
+  .chip[aria-pressed="true"]{color:var(--ok); border-color:rgba(34,197,94,.5);
+        background:rgba(34,197,94,.13); box-shadow:0 0 14px rgba(34,197,94,.1)}
+  .chip svg{width:13px; height:13px; opacity:0; transition:opacity var(--t)}
+  .chip[aria-pressed="true"] svg{opacity:1}
+
+  .tags{display:flex; flex-wrap:wrap; gap:6px; margin-top:12px}
+  .tag{display:inline-flex; align-items:center; gap:5px; font-size:12.5px;
+       background:rgba(255,255,255,.05); border:1px solid var(--hair);
+       border-radius:999px; padding:5px 5px 5px 12px}
+  .tag button{min-height:24px; width:24px; padding:0; border:0; background:none;
+              color:var(--muted); font-size:15px; border-radius:50%}
+  .tag button:hover{color:var(--bad); background:rgba(255,95,87,.16); transform:none}
+  .empty{color:var(--muted); font-size:12.5px; margin-top:12px; opacity:.8}
+
+  /* ---------- terminal ---------- */
+  .term{border-radius:14px; overflow:hidden; border:1px solid var(--hair);
+        background:rgba(0,0,0,.55); backdrop-filter:blur(12px)}
+  .term-bar{display:flex; align-items:center; gap:8px; padding:9px 12px;
+            background:rgba(255,255,255,.05); border-bottom:1px solid var(--hair)}
+  .term-bar span{font-size:11px; color:var(--muted); margin-left:4px}
+  #log{margin:0; padding:12px 14px; height:300px; overflow:auto;
+       font:12.5px/1.65 var(--mono); white-space:pre-wrap; word-break:break-word}
+  #log div{padding:.5px 0}
+  #log div::before{content:'›'; color:#3a4050; margin-right:8px}
+  .l-time{color:#4b5361}
+  .l-give{color:var(--ok); text-shadow:0 0 12px rgba(34,197,94,.35)}
+  .l-win{color:var(--gold); font-weight:700; text-shadow:0 0 12px rgba(251,191,36,.4)}
+  .l-bad{color:var(--bad); text-shadow:0 0 12px rgba(255,95,87,.3)}
+  .l-dim{color:#646b78}
+
+  /* ---------- misc ---------- */
+  .alert{display:flex; gap:11px; align-items:flex-start; padding:13px 15px;
+         border-radius:13px; font-size:13px; line-height:1.5; border:1px solid;
+         backdrop-filter:blur(14px)}
+  .alert.warn{border-color:rgba(245,158,11,.35); background:rgba(245,158,11,.1); color:#FCD9A0}
+  .alert.bad{border-color:rgba(255,95,87,.35); background:rgba(255,95,87,.1); color:#FFC4C0}
+  .alert.ok{border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.1); color:#B7EFC5}
+  .cmd{display:flex; gap:8px; align-items:center; margin-top:8px}
+  .cmd code{flex:1; min-width:0; padding:11px 13px; border-radius:11px;
+            background:rgba(0,0,0,.45); border:1px solid var(--hair);
+            font-size:11.5px; color:#b9c0cc; overflow-x:auto; white-space:nowrap;
+            /* selectable by hand: the copy button cannot be relied on over
+               plain http, and press-and-hold must stay available as a way out */
+            user-select:text; -webkit-user-select:text;
+            -webkit-touch-callout:default}
+  svg{width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:2.2;
+      stroke-linecap:round; stroke-linejoin:round; flex:none}
+  #toast{position:fixed; left:50%; bottom:26px; transform:translate(-50%,14px);
+         z-index:60; padding:13px 20px; border-radius:13px; font-size:13px;
+         color:var(--ink); background:rgba(20,20,28,.82); border:1px solid var(--hair);
+         backdrop-filter:blur(20px) saturate(160%); opacity:0; pointer-events:none;
+         transition:opacity var(--t),transform var(--t);
+         box-shadow:0 12px 40px rgba(0,0,0,.6); max-width:calc(100vw - 32px)}
+  #toast.show{opacity:1; transform:translate(-50%,0)}
+  #toast.bad{border-color:rgba(255,95,87,.5)}
+  /* Compact buttons are fine with a mouse but under the 44px touch guideline.
+     Grow them wherever the pointer is imprecise or the screen is small. */
+  @media (pointer:coarse),(max-width:780px){
+    button{min-height:44px}
+    button.sm{min-height:44px; padding:0 15px; font-size:13px}
+    .chip{min-height:44px}
+    .tag button{min-height:32px; width:32px}
+    #follow{width:20px; height:20px}
+    /* wrap instead of scrolling sideways: you cannot press-and-hold-select
+       text you have to drag a one-line box to see */
+    .cmd code{white-space:pre-wrap; overflow-wrap:anywhere; overflow-x:visible}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<style>
+  /* watcher-only additions */
+  .tab-row{display:flex; gap:10px; align-items:flex-start; padding:10px 0;
+           border-top:1px solid var(--hair)}
+  .tab-row:first-child{border-top:0}
+  .tab-url{font-size:11.5px; color:var(--muted); word-break:break-all}
+  .pill{font-size:10.5px; padding:2px 8px; border-radius:999px; flex:none;
+        border:1px solid var(--hair); color:var(--muted)}
+  .pill.live{color:var(--ok); border-color:rgba(34,197,94,.4)}
+  .pill.give{color:var(--gold); border-color:rgba(251,191,36,.45);
+             background:rgba(251,191,36,.1)}
+  .pill.bad{color:var(--bad); border-color:rgba(255,95,87,.4)}
+  .sel-grid{display:grid; gap:10px}
+  .sel-row{display:grid; grid-template-columns:150px 1fr auto; gap:8px;
+           align-items:center}
+  @media (max-width:780px){ .sel-row{grid-template-columns:1fr} }
+  .sel-row input{width:100%; font-size:12px; min-height:38px}
+  .match{font-size:11.5px; padding:2px 0}
+  .match.hit{color:var(--ok)} .match.miss{color:var(--muted)}
+  pre.text{margin:10px 0 0; padding:12px; border-radius:11px; max-height:280px;
+           overflow:auto; background:rgba(0,0,0,.45); border:1px solid var(--hair);
+           font-size:11px; color:#b9c0cc; white-space:pre-wrap;
+           overflow-wrap:anywhere}
+</style></head>
+<body>
+<div class="bg"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
+
+<header>
+  <div class="hbar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <h1><b>whatnot-watcher</b> — control</h1>
+    <span class="status off" id="pill"><span class="dot"></span><span id="stateTxt">…</span></span>
+    <span class="spacer"></span>
+    <button class="primary" id="btnStart">start</button>
+    <button id="btnStop">stop</button>
+  </div>
+</header>
+
+<main>
+  <div id="alerts"></div>
+
+  <section class="card" id="cardTabs">
+    <h2>your tabs <span class="badge" id="tabBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">This watches the tabs you opened. It
+      never opens, closes or reloads anything — open a stream and it appears
+      here within a couple of seconds.</p>
+    <div id="tabs"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="sm" id="btnBrowser" onclick="post('/api/browser/start')">open the browser</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>activity</h2>
+    <div class="term">
+      <div class="term-bar"><div class="lights"><i></i><i></i><i></i></div>
+        <span>watcher.log</span></div>
+      <div id="log" aria-live="polite" aria-label="Activity log">loading…</div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card" id="cardNotif">
+      <h2>phone alerts <span class="badge" id="notifBadge">–</span></h2>
+      <div class="row">
+        <label class="f" style="flex:1; min-width:125px">service
+          <select id="notifier">
+            <option value="bark">Bark (iPhone)</option>
+            <option value="ntfy">ntfy</option>
+          </select>
+        </label>
+        <label class="f" style="flex:2; min-width:150px"><span id="keyLabel">bark key</span>
+          <input type="text" id="notifKey" placeholder="paste to change"
+                 autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <p class="saved" id="notifSaved"></p>
+      <div class="row" style="margin-top:12px">
+        <button class="sm" onclick="saveNotifier()">save</button>
+        <button class="sm" onclick="post('/api/test-notification')">send test</button>
+      </div>
+    </section>
+
+    <section class="card ready">
+      <h2>timing</h2>
+      <div class="row">
+        <label class="f">check every (s)
+          <input type="number" id="poll" min="1" max="30" style="width:88px">
+        </label>
+        <label class="f">confirm polls
+          <input type="number" id="confirm" min="1" max="6" style="width:88px">
+        </label>
+      </div>
+      <p class="hint">Reading your tabs costs Whatnot nothing, so this can be
+        fast. "Confirm polls" is how many readings must agree before you get a
+        push — 2 rides out a half-drawn page.</p>
+      <div class="row" style="margin-top:12px"><button class="sm" onclick="saveTiming()">save</button></div>
+    </section>
+  </div>
+
+  <section class="card" id="cardSel">
+    <h2>detection <span class="badge" id="selBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">This finds giveaways by the words on
+      the page, so it breaks if Whatnot rewords them. Edit a pattern and press
+      <b>try</b> to see what it matches on the tabs open right now — then save.
+      No file editing, no restart of anything but the watcher.</p>
+    <div class="sel-grid" id="selectors"></div>
+    <div class="row" style="margin-top:14px">
+      <button class="sm" onclick="loadPageText()">show me the page text</button>
+    </div>
+    <pre class="text" id="pageText" style="display:none"></pre>
+  </section>
+
+  <section class="card" id="cardPhone">
+    <h2>use on your phone <span class="badge" id="phoneBadge">–</span></h2>
+    <div id="phoneBody"></div>
+  </section>
+
+  <section class="card">
+    <h2>remote control (ssh)</h2>
+    <p class="hint" style="margin-top:0">For an iOS Shortcut button. You still
+      have to be at the computer to open streams, so this only starts and stops
+      the watcher. <span id="sshHint"></span></p>
+    <div class="chips" role="group" style="margin:14px 0 4px">
+      <button type="button" class="chip" id="tabShortcut" aria-pressed="true"
+              onclick="setSshMode('shortcut')">Apple Shortcuts</button>
+      <button type="button" class="chip" id="tabTerminal" aria-pressed="false"
+              onclick="setSshMode('terminal')">Terminal</button>
+    </div>
+    <div id="sshCmds"></div>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const ICON={
+  ok:'<svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>',
+  todo:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>',
+  copy:'<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
+};
+const esc=s=>String(s==null?'':s).replace(/[<&]/g,c=>c==='<'?'&lt;':'&amp;');
+function toast(m,bad){const t=$('#toast');t.textContent=m;t.classList.toggle('bad',!!bad);
+  t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),4000);}
+async function post(url,body){
+  try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body||{})});
+    const j=await r.json(); toast(j.error||j.message||'done',!r.ok);
+    refresh(); loadConfig(); loadPhone(); return j;
+  }catch(e){toast(String(e),true)}
+}
+function setCard(card,badge,ready){
+  $(card).classList.toggle('ready',ready); $(card).classList.toggle('todo',!ready);
+  const b=$(badge); b.textContent=ready?'ready':'setup'; b.className='badge '+(ready?'ok':'todo');
+}
+
+// Copy: navigator.clipboard only exists in a SECURE context. Over plain http
+// on a phone it is simply absent, and iOS execCommand can report success
+// having copied nothing — so outside https we select the text instead and let
+// the system's own Copy button do it.
+function copyCmd(t, btn){
+  if(window.isSecureContext&&navigator.clipboard){
+    navigator.clipboard.writeText(t).then(()=>toast('copied'),()=>selectInstead(btn));
+  }else selectInstead(btn);
+}
+function selectNode(el){
+  try{const r=document.createRange();r.selectNodeContents(el);
+    const s=window.getSelection();s.removeAllRanges();s.addRange(r);return true;}catch{return false}
+}
+function selectInstead(btn){
+  const code=btn&&btn.closest('.cmd')&&btn.closest('.cmd').querySelector('code');
+  if(code&&selectNode(code))toast('selected — now tap Copy');
+  else toast('press and hold the text to copy it',true);
+}
+document.addEventListener('click',e=>{
+  const c=e.target.closest&&e.target.closest('.cmd code'); if(c)selectNode(c);});
+
+function renderLog(lines){
+  const el=$('#log');
+  const near=el.scrollTop+el.clientHeight>=el.scrollHeight-50;
+  el.innerHTML=lines.length?lines.map(l=>{
+    const m=l.match(/^(\[[\d:]+\]\s*)?(.*)$/s), time=m[1]||'', rest=m[2]||'';
+    let c='';
+    if(/challenge|failed|blind|error/i.test(rest))c='l-bad';
+    else if(/WIN|🏆/.test(rest))c='l-win';
+    else if(/GIVEAWAY/.test(rest))c='l-give';
+    else if(/attached|waiting|ended|stopping/i.test(rest))c='l-dim';
+    return `<div><span class="l-time">${esc(time)}</span><span class="${c}">${esc(rest)}</span></div>`;
+  }).join(''):'<div class="l-dim">nothing yet — press start</div>';
+  if(near)el.scrollTop=el.scrollHeight;
+}
+
+async function refresh(){
+  let s; try{s=await(await fetch('/api/status')).json()}catch{return}
+  const run=s.control.running;
+  $('#pill').className='status '+(run?'on':'off');
+  $('#stateTxt').textContent=run?'watching':'stopped';
+  $('#btnStart').disabled=run; $('#btnStop').disabled=!run;
+  $('#btnBrowser').style.display=s.browser_up?'none':'';
+
+  const a=[];
+  if(!s.browser_up)a.push(`<div class="alert warn">${ICON.todo}<div><b>The browser isn't open.</b>
+    This watches a Chrome it starts for you — your normal Chrome is left alone.
+    <button class="sm" style="margin-left:8px" onclick="post('/api/browser/start')">open it</button></div></div>`);
+  else if(!s.alerts_configured)a.push(`<div class="alert warn">${ICON.todo}<div><b>No phone alerts set up.</b>
+    Nothing can reach your phone until you add a key below.</div></div>`);
+  else if(!run)a.push(`<div class="alert ok">${ICON.ok}<div><b>Ready.</b>
+    Open the streams you want, then press start.
+    <button class="sm primary" style="margin-left:8px" onclick="post('/api/start')">start</button></div></div>`);
+  $('#alerts').innerHTML=a.join('');
+
+  try{renderLog((await(await fetch('/api/log?lines=300')).json()).lines)}catch{}
+  loadTabs();
+}
+
+async function loadTabs(){
+  let t; try{t=await(await fetch('/api/tabs')).json()}catch{return}
+  const live=t.tabs.filter(x=>x.kind==='live');
+  $('#tabBadge').textContent=t.browser?`${live.length} stream${live.length===1?'':'s'}`:'no browser';
+  $('#tabBadge').className='badge '+(live.length?'ok':'todo');
+  setCard('#cardTabs','#tabBadge',live.length>0);
+  if(!t.browser){$('#tabs').innerHTML='<p class="empty">the browser is not running</p>';return}
+  if(!t.tabs.length){$('#tabs').innerHTML='<p class="empty">no Whatnot tabs open — open a stream in that browser</p>';return}
+  $('#tabs').innerHTML=t.tabs.map(x=>{
+    let pill='<span class="pill">page</span>';
+    if(x.kind==='purchases')pill='<span class="pill">purchases</span>';
+    else if(x.kind==='live'){
+      const r=x.reading||{};
+      if(r.challenge)pill='<span class="pill bad">challenge</span>';
+      else if(r.present)pill=`<span class="pill give">giveaway${r.entries!=null?' · '+r.entries:''}</span>`;
+      else pill='<span class="pill live">watching</span>';
+    }
+    return `<div class="tab-row">${pill}<div style="flex:1;min-width:0">
+      <div>${esc(x.title||'—')}</div><div class="tab-url">${esc(x.url)}</div></div></div>`;
+  }).join('');
+}
+
+async function loadConfig(){
+  const c=await(await fetch('/api/config')).json();
+  const isBark=(c.notifier||'bark')==='bark';
+  $('#notifier').value=c.notifier||'bark';
+  $('#keyLabel').textContent=isBark?'bark key':'ntfy topic';
+  const set=isBark?c.bark_key_set:c.ntfy_topic_set;
+  const hint=isBark?c.bark_key_hint:c.ntfy_topic_hint;
+  setCard('#cardNotif','#notifBadge',set);
+  $('#notifSaved').innerHTML=set?`${ICON.ok} saved <b>${esc(hint||'')}</b>`
+                                :`${ICON.todo} nothing saved yet`;
+  $('#poll').value=c.poll_seconds??2;
+  $('#confirm').value=c.confirm_polls??2;
+}
+function saveNotifier(){
+  const n=$('#notifier').value,key=$('#notifKey').value.trim(),patch={notifier:n};
+  if(key)patch[n==='bark'?'bark_key':'ntfy_topic']=key;
+  post('/api/config',patch).then(()=>$('#notifKey').value='');
+}
+function saveTiming(){
+  post('/api/config',{poll_seconds:+$('#poll').value,confirm_polls:+$('#confirm').value});
+}
+
+// --- the selector editor: the reason this panel exists ---------------------
+const SEL_LABELS={
+  giveaway_present:'giveaway running', entries:'entry count', prize:'prize name',
+  buyers_only:'buyers only', followers_only:'followers only',
+  challenge:'bot challenge'};
+async function loadSelectors(){
+  const s=await(await fetch('/api/selectors')).json();
+  const live=s.live||{};
+  const rows=Object.keys(SEL_LABELS).filter(k=>k in live).map(k=>`
+    <div class="sel-row">
+      <label class="f" style="text-transform:none; letter-spacing:0; font-size:12px">
+        ${esc(SEL_LABELS[k])}</label>
+      <input type="text" id="sel_${k}" spellcheck="false" value="${esc(live[k]||'')}">
+      <div class="row">
+        <button class="sm" onclick="trySel('${k}')">try</button>
+        <button class="sm primary" onclick="saveSel('${k}')">save</button>
+      </div>
+      <div class="match miss" id="m_${k}" style="grid-column:1/-1"></div>
+    </div>`).join('');
+  $('#selectors').innerHTML=rows;
+  const ok=!!live.giveaway_present;
+  $('#selBadge').textContent=ok?'configured':'check';
+  $('#selBadge').className='badge '+(ok?'ok':'todo');
+}
+async function trySel(name){
+  const pattern=$('#sel_'+name).value;
+  const el=$('#m_'+name);
+  el.textContent='checking…'; el.className='match miss';
+  try{
+    const r=await fetch('/api/selectors/preview',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({section:'live',name,pattern})});
+    const j=await r.json();
+    if(!r.ok){el.textContent=j.error;el.className='match miss';return}
+    const hits=j.results.filter(x=>x.match);
+    el.className='match '+(hits.length?'hit':'miss');
+    el.textContent=hits.length
+      ? hits.map(h=>`✓ ${h.match}`).join('   ')
+      : `no match on any of your ${j.results.length} tab(s)`;
+  }catch(e){el.textContent=String(e)}
+}
+function saveSel(name){
+  post('/api/selectors',{section:'live',name,pattern:$('#sel_'+name).value})
+    .then(()=>loadSelectors());
+}
+async function loadPageText(){
+  const box=$('#pageText');
+  try{
+    const r=await fetch('/api/page-text');
+    const j=await r.json();
+    if(!r.ok){toast(j.error,true);return}
+    box.style.display=''; box.textContent=j.url+'\n\n'+j.text;
+  }catch(e){toast(String(e),true)}
+}
+
+// --- phone + ssh -----------------------------------------------------------
+async function loadPhone(){
+  let p; try{p=await(await fetch('/api/phone-info')).json()}catch{return}
+  const box=$('#phoneBody'), badge=$('#phoneBadge');
+  if(!p.tailscale){
+    badge.textContent='setup'; badge.className='badge todo';
+    $('#cardPhone').className='card todo';
+    box.innerHTML=p.tailscale_state==='signed-out'?`
+      <p class="hint" style="margin-top:0">Tailscale is installed but this
+      machine isn't connected yet, so there's no address to show. Open the
+      Tailscale app, sign in, and sign in on your phone with the same
+      account.</p>`:`
+      <p class="hint" style="margin-top:0">To open this panel on your phone,
+      both devices need to be on the same private network. Tailscale is the
+      easy way — free, and it works over mobile data.</p>
+      <div class="cmd"><code>https://tailscale.com/download</code>
+        <button class="sm" onclick="window.open('https://tailscale.com/download','_blank','noopener')">open</button>
+        <button class="sm" onclick='copyCmd("https://tailscale.com/download",this)'>${ICON.copy}</button></div>`;
+    return;
+  }
+  badge.textContent='ready'; badge.className='badge ok';
+  $('#cardPhone').className='card ready';
+  box.innerHTML=`
+    <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start">
+      <div style="background:#fff; padding:9px; border-radius:12px; line-height:0">
+        <img src="/api/phone-qr.svg" alt="QR code" style="width:132px;height:132px;display:block">
+      </div>
+      <div style="flex:1; min-width:210px">
+        <p class="hint" style="margin-top:0">Scan it, or open:</p>
+        <div class="cmd"><code>${esc(p.url)}</code>
+          <button class="sm" onclick='copyCmd(${JSON.stringify(p.url)},this)'>${ICON.copy}</button></div>
+        ${p.password?`<p class="saved" style="margin-top:12px">password
+          <b style="letter-spacing:.06em">${esc(p.password)}</b></p>`:''}
+      </div>
+    </div>
+    ${phoneAccessBlock(p)}`;
+}
+function phoneAccessBlock(p){
+  if(p.bound_all) return `<p class="hint" style="margin-top:14px">${ICON.ok}
+    Phone access is on. <button class="sm" style="margin-left:8px"
+      onclick="confirmPost('/api/phone-access','Turn phone access off?',{allow:false})">turn off</button></p>`;
+  if(p.restart_pending) return `<div class="alert warn" style="margin-top:14px">${ICON.todo}
+    <div><b>Almost — the panel has to be started again.</b>
+    <ol style="margin:8px 0 0; padding-left:18px; line-height:1.9">
+      <li>Close the black window this is running in.</li>
+      <li>Double-click <b>${esc(p.launcher)}</b>.</li>
+      <li>Come back here.</li></ol></div></div>`;
+  return `<div class="alert warn" style="margin-top:14px">${ICON.todo}<div>
+    <b>The panel only accepts connections from this computer.</b> Your phone can
+    scan the code but the page won't load.
+    <div class="row" style="margin-top:10px">
+      <button class="sm primary" onclick="confirmPost('/api/phone-access',
+        'Let your other devices open this panel?',{allow:true})">allow my phone</button>
+    </div>
+    <p class="hint">Copy buttons need https. After allowing, run this once and
+      use the https address it prints:</p>
+    <div class="cmd"><code>${esc(p.tailscale_serve)}</code>
+      <button class="sm" onclick='copyCmd(${JSON.stringify(p.tailscale_serve)},this)'>${ICON.copy}</button></div>
+    <p class="hint">First time it may say "Serve is not enabled on your
+      tailnet" and print a link — open it, approve, run again.</p></div></div>`;
+}
+const confirmPost=(u,q,body)=>{if(confirm(q))post(u,body)};
+
+const SSH_WHAT={start:'begin watching', stop:'stop watching', status:'is it running?'};
+let sshInfo=null, sshMode='shortcut', sshSeen='';
+function field(label,value,note){
+  return `<div style="margin-top:10px">
+    <div style="display:flex; gap:8px; align-items:baseline">
+      <b style="font-size:12px; letter-spacing:.06em; text-transform:uppercase">${esc(label)}</b>
+      ${note?`<span class="hint" style="margin:0">${esc(note)}</span>`:''}</div>
+    <div class="cmd"><code>${esc(value)}</code>
+      <button class="sm" onclick='copyCmd(${JSON.stringify(value)},this)'>${ICON.copy}</button></div>
+  </div>`;
+}
+function sshServerBlock(srv){
+  if(!srv) return '';
+  const how=`${srv.intro?`<p class="hint" style="margin:8px 0 0">${esc(srv.intro)}</p>`:''}
+    <ol style="margin:8px 0 0; padding-left:20px">
+      ${(srv.procedure||[]).map(s=>`<li style="margin-top:8px">
+        <span class="hint" style="margin:0">${esc(s.text)}</span>
+        ${s.command?`<div class="cmd"><code>${esc(s.command)}</code>
+          <button class="sm" onclick='copyCmd(${JSON.stringify(s.command)},this)'>${ICON.copy}</button></div>`:''}
+      </li>`).join('')}</ol>`;
+  if(srv.listening) return `<div class="alert ok">${ICON.ok}<div>
+    <b>SSH server is running here.</b>
+    <details style="margin-top:6px"><summary class="hint" style="cursor:pointer">
+      where this lives, and what to sign in with</summary>
+      <p class="hint" style="margin:8px 0 0">${esc(srv.check||'')}</p></details></div></div>`;
+  return `<div class="alert bad">${ICON.todo}<div>
+    <b>No SSH server is running on this computer.</b> Any shortcut will fail
+    with "could not connect" until this is fixed. ${esc(srv.summary||'')}
+    ${how}<p class="hint" style="margin:8px 0 0">Check: ${esc(srv.check||'')}</p></div></div>`;
+}
+function renderSsh(){
+  const s=sshInfo; if(!s) return;
+  $('#tabShortcut').setAttribute('aria-pressed',String(sshMode==='shortcut'));
+  $('#tabTerminal').setAttribute('aria-pressed',String(sshMode==='terminal'));
+  let warn=sshServerBlock(s.ssh_server);
+  if(s.user_warning)warn+=`<div class="alert bad">${ICON.todo}<div>${esc(s.user_warning)}</div></div>`;
+  if(sshMode==='terminal'){
+    $('#sshCmds').innerHTML=warn+Object.entries(s.commands)
+      .map(([k,v])=>field(k,v,SSH_WHAT[k])).join('');
+    return;
+  }
+  $('#sshCmds').innerHTML=warn+`
+    <p class="hint" style="margin-top:0">In Shortcuts: <b>+</b> → add the
+      <b>Run Script Over SSH</b> action → fill these in. One shortcut per
+      button, then long-press → <b>Add to Home Screen</b>.</p>
+    ${field('host',String(s.host))}
+    ${field('port',String(s.port))}
+    ${field('user',String(s.user),'required')}
+    <p class="hint" style="margin-top:12px">Set <b>Authentication</b> to your
+      computer's password, or an SSH key.</p>
+    <p class="hint" style="margin-top:14px; letter-spacing:.08em;
+       text-transform:uppercase; font-size:11px">script — one shortcut each</p>
+    ${Object.entries(s.scripts).map(([k,v])=>field(k,v,SSH_WHAT[k])).join('')}
+    <p class="hint" style="margin-top:12px">Paste the script exactly — no
+      <code>ssh</code> in front, no quotes around it.</p>`;
+}
+function setSshMode(m){sshMode=m;renderSsh()}
+async function loadSsh(){
+  try{
+    const fresh=await(await fetch('/api/ssh-info')).json();
+    const sig=JSON.stringify(fresh); if(sig===sshSeen)return;   // don't wipe a selection
+    sshSeen=sig; sshInfo=fresh;
+    $('#sshHint').innerHTML='These use <b>'+esc(fresh.host)+'</b> ('+esc(fresh.via)+')'
+      +(fresh.via==='tailscale'?', which works from anywhere.'
+        :' — that name only resolves on your own network.');
+    renderSsh();
+  }catch{}
+}
+
+$('#btnStart').onclick=()=>post('/api/start');
+$('#btnStop').onclick=()=>post('/api/stop');
+refresh(); loadConfig(); loadSelectors(); loadPhone(); loadSsh();
+setInterval(refresh,2500);
+setInterval(loadSsh,15000);
+</script>
+</body>
+</html>

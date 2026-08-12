@@ -46,6 +46,16 @@ class ReadingAPage(unittest.TestCase):
         r = self.read("Giveaway with 5 entries\nBuyer appreciation giveaway")
         self.assertTrue(r["buyers_only"])
 
+    def test_prize_does_not_capture_the_entry_wording(self):
+        # The first default matched "Giveaway with 37 entries" and called the
+        # prize "with 37 entries". A wrong prize in the push title is worse
+        # than none, so the pattern requires a colon.
+        self.assertEqual(self.read("Giveaway with 37 entries")["prize"], "")
+
+    def test_prize_is_read_when_the_page_actually_names_one(self):
+        r = self.read("Giveaway with 5 entries\nGiveaway: Booster Box")
+        self.assertEqual(r["prize"], "Booster Box")
+
     def test_a_broken_pattern_does_not_crash(self):
         broken = {"live": {"giveaway_present": "Giveaway with \\d+ entr",
                            "entries": "([unclosed"}}

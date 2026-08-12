@@ -9,26 +9,19 @@
     "Everything is a case-insensitive regex matched against the tab's visible",
     "text. A capture group, where present, is the value extracted."
   ],
-
   "live": {
     "_note": "giveaway_present is the only REQUIRED one. It is the string the old radar already matched successfully, so it is known real. The rest are best guesses until probed against a live stream — see SPEC open question 3.",
-
     "giveaway_present": "Giveaway with \\d+ entr",
     "entries": "Giveaway with (\\d+) entr",
-
-    "_note_prize": "Unconfirmed. If probe shows the prize elsewhere, fix this.",
-    "prize": "Giveaway:?\\s*(.{3,80}?)\\s*(?:\\n|$)",
-
+    "_note_prize": "Requires a colon on purpose. Without it this matched 'Giveaway with 37 entries' and captured 'with 37 entries' as the prize name. Better to show nothing than something wrong — if it never matches you just get a generic title. Fix it here once probe shows how the page really names the prize.",
+    "prize": "Giveaway:\\s*(.{3,80}?)\\s*(?:\\n|$)",
     "_note_flags": "Unconfirmed. If these never match, buyers-only giveaways will alert like any other — annoying, not harmful.",
     "buyers_only": "buyer appreciation|buyers only|purchase to enter",
     "followers_only": "followers only|follow to enter|following to enter",
-
     "seller": "^@?([A-Za-z0-9_.-]{3,30})\\s*$",
-
     "_note_challenge": "Matched the same way the radar does it. A challenged tab is skipped, never reloaded.",
     "challenge": "just a moment|attention required|checking your browser|verify you are human|enable javascript and cookies to continue"
   },
-
   "purchases": {
     "_note": "SPEC open question 2. Rows are read with a CSS selector because innerText alone gives no row boundaries. The default is a guess; run `python watch.py probe` with the purchases tab open and send the output if it finds nothing.",
     "url_match": "activityTab=purchases",

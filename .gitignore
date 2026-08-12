@@ -4,3 +4,5 @@ notifications.log
 chrome-profile/
 .venv/
 __pycache__/
+watcher.log
+.watcher.pid
