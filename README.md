@@ -98,14 +98,27 @@ is completely fine.
 
 ### What the notifications mean
 
+```
+🎁 Giveaway — danihagebeuktcg 🎁
+🎁 FREE BOOSTER PACK + FREE SHIPPING 📦 #29
+Open the app to enter.
+https://www.whatnot.com/live/929f8191-…
+```
+
+Seller on the top line, prize under it, and the link opens that stream. No
+entry count — it's out of date the moment it's sent, and it pushed the prize
+further down.
+
 | You see | It means | Do |
 |---|---|---|
-| 🎁 **prize name** | A giveaway just started | Tap it, enter in the app |
-| 🎁 **giveaway** (no name) | Started, but the banner was collapsed so the title wasn't on screen | Same — tap it |
-| 🏆 **You won!** | A free item appeared on your purchases page | Tap it — it opens the stream you won it in |
+| 🎁 **Giveaway — seller** | A giveaway just started there | Tap it, enter in the app |
+| 🏆 **You won — seller!** | A free item appeared on your purchases page | Tap it — it opens the stream you won in |
 | 🛒 **Purchase** | Something you paid for appeared there | — |
 | ⚠️ **Challenge on a tab** | Whatnot is showing a robot check in one tab | Close that tab, or solve it yourself |
 | ⚠️ **Watcher may be blind** | It hasn't recognised anything for a while | See below |
+
+If the banner was collapsed when it fired, the prize line reads "A giveaway
+just started." instead of the title — everything else is the same.
 
 **Giveaways you can't enter are not pushed.** The page says so itself — a
 buyers giveaway you haven't bought into shows *"Not eligible"*, and that one

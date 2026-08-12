@@ -14,14 +14,15 @@
     "giveaway_present": "Giveaway with [\\d.,\\s  ]*\\d\\s*k? entr",
     "entries": "Giveaway with ([\\d.,\\s  ]*\\d\\s*k?) entr",
     "prize": "Giveaway with [\\d.,\\s  ]*\\d\\s*k? entries?\\s*\\n+\\s*(?!Not eligible|Open Mobile App|Terms|Chat\\b|Watching)(.{2,90}?)\\s*(?:\\n|$)",
-    "seller": "^@?([A-Za-z0-9_.-]{3,30})\\s*$",
+    "seller": "^\\s*@?([A-Za-z0-9_.]{3,30})\\s*\\n\\s*[★\\d][\\d.]*\\s*$",
     "_note_challenge": "Matched the same way the radar does it. A challenged tab is skipped, never reloaded.",
     "challenge": "just a moment|attention required|checking your browser|verify you are human|enable javascript and cookies to continue",
     "_note_counts": "The count is not always a bare integer: 1,234 in English, 1.234 in Dutch, a thin space, or 12k when the UI shortens it. The old \\d+ failed to match those outright, which hid the whole giveaway — and the biggest giveaways are exactly the ones with formatted numbers.",
     "_note_prize": "The line directly under the entry count. The lookahead stops it grabbing the eligibility line, the T&C link or the chat header when the banner is collapsed and there is no prize line at all.",
     "_note_eligibility": "The page says outright whether you can enter, which beats inferring it. 'Not eligible' is a buyers giveaway you have not bought into. 'Open Mobile App To Enter' means you can. Neither present = collapsed banner, so we do not know — and we notify, because a missed giveaway costs more than a redundant buzz.",
     "not_eligible": "Not eligible",
-    "enterable": "Open Mobile App To Enter"
+    "enterable": "Open Mobile App To Enter",
+    "_note_seller": "Only a fallback. The seller is normally taken from their profile link in the page, which is unambiguous — reading it out of the text is unreliable because every line of chat is a username too."
   },
   "purchases": {
     "_note": "Confirmed against a real screenshot 2026-08-12. The activity panel opens over the home page at ?activityTab=purchases, and each row has a rigid shape: a status badge, the title, 'Purchased: €x.xx', then 'Date: d/m/yyyy'. Parsed from text rather than a CSS selector — the shape is stable, class names are not.",

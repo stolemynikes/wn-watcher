@@ -248,6 +248,60 @@ class LinkingAWinToItsStream(unittest.TestCase):
         self.assertEqual(len(state["recent_giveaways"]), 2)
 
 
+class NotificationShape(unittest.TestCase):
+    """Matches the format the old radar used, which reads well on a lock
+    screen: who on the title line, what underneath, then what to do."""
+
+    class Spy:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, title, message, url, **kw):
+            self.sent.append({"title": title, "message": message, "url": url})
+
+    def announce(self, reading, url="https://wn/live/x"):
+        spy = self.Spy()
+        watch.announce_giveaway(spy, url, reading, {})
+        return spy.sent
+
+    def test_seller_is_on_the_title_line(self):
+        sent = self.announce({"present": True, "seller": "danihagebeuktcg",
+                              "prize": "FREE BOOSTER PACK #29", "eligible": True})
+        self.assertEqual(sent[0]["title"], "🎁 Giveaway — danihagebeuktcg 🎁")
+
+    def test_prize_leads_the_body(self):
+        sent = self.announce({"present": True, "seller": "s",
+                              "prize": "FREE BOOSTER PACK #29", "eligible": True})
+        self.assertTrue(sent[0]["message"].startswith("FREE BOOSTER PACK #29"))
+
+    def test_no_entry_count_anywhere(self):
+        sent = self.announce({"present": True, "seller": "s", "prize": "Box",
+                              "entries": 402, "eligible": True})
+        blob = sent[0]["title"] + sent[0]["message"]
+        self.assertNotIn("402", blob)
+        self.assertNotIn("entries", blob.lower())
+
+    def test_it_links_to_the_stream(self):
+        sent = self.announce({"present": True, "seller": "s", "prize": "Box",
+                              "eligible": True}, url="https://wn/live/abc")
+        self.assertEqual(sent[0]["url"], "https://wn/live/abc")
+
+    def test_unknown_seller_still_sends(self):
+        sent = self.announce({"present": True, "seller": "", "prize": "Box",
+                              "eligible": None})
+        self.assertEqual(sent[0]["title"], "🎁 Giveaway 🎁")
+
+    def test_collapsed_banner_says_something_useful(self):
+        sent = self.announce({"present": True, "seller": "tcg_nl", "prize": "",
+                              "eligible": None})
+        self.assertIn("giveaway just started", sent[0]["message"].lower())
+
+    def test_ineligible_sends_nothing(self):
+        self.assertEqual(
+            self.announce({"present": True, "seller": "s", "prize": "tb 3",
+                           "eligible": False}), [])
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""

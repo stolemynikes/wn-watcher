@@ -69,7 +69,7 @@ def save_state(state: dict) -> None:
 # in Python against the page's visible text, so the patterns live in
 # selectors.json and a broken selector is a config edit, not a code change.
 
-PAGE_TEXT = """() => ({
+PAGE_TEXT = r"""() => ({
     url: location.href,
     title: document.title,
     text: (document.body && document.body.innerText || '').slice(0, 20000),
@@ -79,7 +79,17 @@ PAGE_TEXT = """() => ({
     // title without touching anything. Used only as a fallback for the prize,
     // never for presence or eligibility: those must reflect what is really on
     // screen.
-    domText: (document.body && document.body.textContent || '').slice(0, 40000)
+    domText: (document.body && document.body.textContent || '').slice(0, 40000),
+    // The seller, from their own profile link. More reliable than reading it
+    // out of the text: the page is full of usernames — every line of chat is
+    // one — and the href is unambiguous.
+    seller: (() => {
+        for (const a of document.querySelectorAll('a[href*="/user/"]')) {
+            const m = (a.getAttribute('href') || '').match(/\/user\/([^/?#]+)/);
+            if (m) return m[1];
+        }
+        return '';
+    })()
 })"""
 
 ROWS_JS = """(sel) => Array.from(document.querySelectorAll(sel))
@@ -150,7 +160,8 @@ def read_prize(live: dict, text: str, dom_text: str = "") -> str:
             or "")
 
 
-def read_live_tab(text: str, sel: dict, dom_text: str = "") -> dict:
+def read_live_tab(text: str, sel: dict, dom_text: str = "",
+                  seller: str = "") -> dict:
     """Turn a stream tab's text into a giveaway reading.
 
     `text` is what is on screen; `dom_text` may additionally contain nodes the
@@ -174,6 +185,9 @@ def read_live_tab(text: str, sel: dict, dom_text: str = "") -> dict:
     return {
         "challenge": False,
         "present": present,
+        # The link is authoritative; the text pattern is only a fallback for
+        # when the markup changes and the href is no longer there.
+        "seller": seller or first_group(live.get("seller"), text) or "",
         "prize": (read_prize(live, text, dom_text) if present else ""),
         "entries": entries if present else None,
         "eligible": eligible,
@@ -298,7 +312,8 @@ def cmd_probe(cfg: dict, sel: dict) -> None:
                     print("    (nothing — send me the page text below so I can "
                           "fix row_selector)")
             else:
-                reading = read_live_tab(text, sel, info.get("domText", ""))
+                reading = read_live_tab(text, sel, info.get("domText", ""),
+                                          info.get("seller", ""))
                 print("\n  pattern            result")
                 for name in ("giveaway_present", "entries", "prize",
                              "buyers_only", "followers_only", "challenge"):
@@ -359,7 +374,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     continue
 
                 live_urls.add(url)
-                reading = read_live_tab(text, sel, info.get("domText", ""))
+                reading = read_live_tab(text, sel, info.get("domText", ""),
+                                          info.get("seller", ""))
 
                 if reading["challenge"]:
                     if url not in challenged:
@@ -429,35 +445,37 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
 def announce_giveaway(notifier, url: str, reading: dict,
                       remember: dict | None = None) -> None:
-    prize = reading.get("prize") or "giveaway"
-    entries = reading.get("entries")
+    """Push in the shape the old radar used, which reads well on a lock screen:
+    who it is on the title line, what it is underneath, then what to do.
+
+    No entry count. It is stale the moment it is sent and it pushed the thing
+    you actually want — the prize — further down.
+    """
+    seller = reading.get("seller") or ""
+    prize = reading.get("prize") or ""
     eligible = reading.get("eligible")
 
-    # Only silence a giveaway the page has explicitly said you cannot enter.
-    # Unknown (a collapsed banner) is announced: a missed giveaway costs an
-    # entry, a redundant buzz costs nothing.
+    # Silence only what the page has explicitly said you cannot enter.
+    # Unknown is announced: a missed giveaway costs an entry, a spare buzz
+    # costs nothing.
     if eligible is False:
-        log(f"not eligible, staying quiet — {prize} — {url}")
+        log(f"not eligible, staying quiet — {prize or 'giveaway'} — {url}")
         return
 
-    bits = []
-    if entries is not None:
-        bits.append(f"{entries} entries")
-    if eligible is None:
-        bits.append("eligibility unknown")
-    detail = " · ".join(bits)
+    title = f"🎁 Giveaway — {seller} 🎁" if seller else "🎁 Giveaway 🎁"
+    body = prize or "A giveaway just started."
+    body += "\nOpen the app to enter."
 
-    if remember is not None and reading.get("prize"):
+    if remember is not None and prize:
         # Kept so a win can be traced back to the stream it came from — the
         # purchases row has no link of its own.
-        remember[url] = {"prize": reading["prize"], "at": time.time()}
-    log(f"GIVEAWAY — {prize} {('(' + detail + ')') if detail else ''} — {url}")
+        remember[url] = {"prize": prize, "seller": seller, "at": time.time()}
+
+    log(f"GIVEAWAY — {seller or '?'} — {prize or '(title not on screen)'} — {url}")
     try:
-        notifier.send(f"🎁 {prize} 🎁", detail or "Tap to enter.", url,
-                      priority="max", group="giveaways")
+        notifier.send(title, body, url, priority="max", group="giveaways")
     except Exception as exc:
         log(f"notification failed ({exc.__class__.__name__}) — will retry")
-
 
 
 # --- linking a win back to the stream it came from --------------------------
@@ -556,19 +574,22 @@ def check_purchases(page, sel: dict, state: dict, notifier) -> None:
         # the match is not clear-cut: the wrong seller's stream would be worse
         # than a generic link.
         link = f"{BASE_URL}/?activityTab=purchases"
-        where = ""
+        seller, where = "", ""
         if row["won"]:
             match = match_stream(row["title"], state.get("recent_giveaways", {}),
                                  time.time())
             if match:
-                link, where = match, " — tap to open the stream"
+                link = match
+                seller = (state["recent_giveaways"][match].get("seller") or "")
+                where = " — tap to open the stream"
         log(f"{'WIN' if row['won'] else 'purchase'} — {row['title'][:70]} "
             f"(€{row['price']:.2f}, {row['status']}){where}")
         try:
-            notifier.send(
-                "🏆 You won! 🏆" if row["won"] else "🛒 Purchase 🛒",
-                row["title"][:160], link,
-                priority="max" if row["won"] else "default", group="results")
+            title = ("🏆 You won" + (f" — {seller}" if seller else "") + "! 🏆"
+                     if row["won"] else "🛒 Purchase 🛒")
+            notifier.send(title, row["title"][:160], link,
+                          priority="max" if row["won"] else "default",
+                          group="results")
         except Exception as exc:
             log(f"notification failed ({exc.__class__.__name__})")
     state["purchases_seeded"] = True
