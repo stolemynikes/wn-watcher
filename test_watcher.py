@@ -132,6 +132,71 @@ class TheRealBanner(unittest.TestCase):
         self.assertFalse(r["present"])
 
 
+class ThePurchasesPanel(unittest.TestCase):
+    """Transcribed from a real screenshot, 2026-08-12."""
+
+    TEXT = """Activity
+Purchases Offers Saved
+Orders Community Boost
+In Transit
+PACKS / SINGLES IN SCHERM VANAF (ALLES GAAT OPE...
+Purchased: €4.00
+Date: 8/10/2026
+In Transit
+GEM VOL 5 BOOSTERBOX (18 PACKS)
+Purchased: €12.49
+Date: 8/10/2026
+Completed
+GIVVY 8 (pls bookmark our shows)
+Purchased: €0.00
+Date: 8/7/2026
+Delivery date: 8/11/2026
+Pending Review
+`FREE PACKS & SHIPPING TWV €4,06 #16
+Purchased: €0.00
+Date: 8/6/2026
+Delivery date: 8/11/2026
+Download Purchase History"""
+
+    def rows(self):
+        return watch.parse_purchases(self.TEXT, SELECTORS)
+
+    def test_finds_every_row(self):
+        self.assertEqual(len(self.rows()), 4)
+
+    def test_free_items_are_wins_and_paid_ones_are_not(self):
+        won = [r["title"] for r in self.rows() if r["won"]]
+        self.assertIn("GIVVY 8 (pls bookmark our shows)", won)
+        self.assertNotIn("GEM VOL 5 BOOSTERBOX (18 PACKS)", won)
+
+    def test_a_price_inside_a_title_is_not_the_row_price(self):
+        # "FREE PACKS & SHIPPING TWV €4,06 #16" cost nothing despite the €4,06
+        # in its name. Anchoring on the status badge is what prevents this.
+        row = next(r for r in self.rows() if "TWV" in r["title"])
+        self.assertEqual(row["price"], 0.0)
+        self.assertTrue(row["won"])
+
+    def test_status_is_captured(self):
+        self.assertEqual({r["status"] for r in self.rows()},
+                         {"In Transit", "Completed", "Pending Review"})
+
+    def test_page_furniture_is_not_a_row(self):
+        titles = [r["title"] for r in self.rows()]
+        for junk in ("Activity", "Orders Community Boost",
+                     "Download Purchase History"):
+            self.assertNotIn(junk, titles)
+
+    def test_rows_are_identified_beyond_their_title(self):
+        # Titles repeat across shows ("FREE PACK/CARD + FREE SHIPPING #12"),
+        # so the key includes date and price.
+        keys = {f"{r['title']}|{r['date']}|{r['price']}" for r in self.rows()}
+        self.assertEqual(len(keys), 4)
+
+    def test_a_broken_row_pattern_yields_nothing_rather_than_raising(self):
+        self.assertEqual(watch.parse_purchases(self.TEXT,
+                                               {"purchases": {"row": "([bad"}}), [])
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""

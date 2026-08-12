@@ -102,7 +102,8 @@ is completely fine.
 |---|---|---|
 | 🎁 **prize name** | A giveaway just started | Tap it, enter in the app |
 | 🎁 **giveaway** (no name) | Started, but the banner was collapsed so the title wasn't on screen | Same — tap it |
-| 🏆 **You won!** | Something new appeared on your purchases page | Check Whatnot |
+| 🏆 **You won!** | A free item appeared on your purchases page | Check Whatnot |
+| 🛒 **Purchase** | Something you paid for appeared there | — |
 | ⚠️ **Challenge on a tab** | Whatnot is showing a robot check in one tab | Close that tab, or solve it yourself |
 | ⚠️ **Watcher may be blind** | It hasn't recognised anything for a while | See below |
 
@@ -116,6 +117,13 @@ top right shows only "Giveaway with N entries" — the title isn't on screen, so
 the alert just says "giveaway". Click the banner open in a stream and the name
 comes through. It also tries to read the title straight out of the page even
 when collapsed, which often works.
+
+**Wins come from the purchases tab.** Open
+`whatnot.com/?activityTab=purchases` in that browser and leave it there. A
+giveaway win costs €0.00, which is how it's told apart from something you
+bought — more reliable than looking for the word "giveaway", which paid
+listings use too. It only notices new rows *after* you start it, so your
+history stays quiet.
 
 **Sound is muted.** Six live streams at once is unbearable otherwise. Whatnot
 can't tell — the mute is applied inside Chrome, below anything a web page can

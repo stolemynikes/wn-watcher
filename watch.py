@@ -441,29 +441,59 @@ def announce_giveaway(notifier, url: str, reading: dict) -> None:
         log(f"notification failed ({exc.__class__.__name__}) — will retry")
 
 
+def parse_purchases(text: str, sel: dict) -> list:
+    """Rows from the activity panel: (status, title, price, date, won).
+
+    Read from the text rather than a CSS selector — the shape is stable and
+    class names are not. A giveaway win costs nothing, so the price is what
+    marks it, which is far more reliable than looking for the word "giveaway":
+    plenty of paid listings say that too.
+    """
+    pattern = sel.get("purchases", {}).get("row")
+    if not pattern:
+        return []
+    try:
+        found = re.findall(pattern, text, re.I | re.M)
+    except re.error:
+        return []
+    rows = []
+    for status, title, price, date in found:
+        try:
+            # Anchored on the badge, so a price written into a TITLE cannot be
+            # read as the row's price — one real row is called
+            # "FREE PACKS & SHIPPING TWV €4,06 #16".
+            amount = float(price.replace(" ", "").replace(",", "."))
+        except ValueError:
+            amount = -1.0
+        rows.append({"status": status.strip(), "title": title.strip(),
+                     "price": amount, "date": date.strip(),
+                     "won": amount == 0.0})
+    return rows
+
+
 def check_purchases(page, sel: dict, state: dict, notifier) -> None:
     """New rows on the purchases tab are wins or buys."""
-    conf = sel["purchases"]
     try:
-        rows = page.evaluate(ROWS_JS, conf["row_selector"])
+        info = page.evaluate(PAGE_TEXT)
     except Exception:
         return
-    minimum = conf.get("row_min_length", 12)
-    for row in rows:
-        if len(row) < minimum or row in state["seen_purchases"]:
+    for row in parse_purchases(info["text"], sel):
+        key = f"{row['title']}|{row['date']}|{row['price']}"
+        if key in state["seen_purchases"]:
             continue
-        state["seen_purchases"][row] = datetime.now(timezone.utc).isoformat()
-        # First sight of the tab would otherwise announce your entire history.
-        if state.get("purchases_seeded"):
-            won = matches(conf.get("win_hint"), row)
-            log(f"{'WIN' if won else 'purchase'} — {row[:80]}")
-            try:
-                notifier.send("🏆 You won! 🏆" if won else "🛒 Purchase 🛒",
-                              row[:160], f"{BASE_URL}/?activityTab=purchases",
-                              priority="max" if won else "default",
-                              group="results")
-            except Exception as exc:
-                log(f"notification failed ({exc.__class__.__name__})")
+        state["seen_purchases"][key] = datetime.now(timezone.utc).isoformat()
+        # First sight would otherwise announce your entire purchase history.
+        if not state.get("purchases_seeded"):
+            continue
+        log(f"{'WIN' if row['won'] else 'purchase'} — {row['title'][:70]} "
+            f"(€{row['price']:.2f}, {row['status']})")
+        try:
+            notifier.send(
+                "🏆 You won! 🏆" if row["won"] else "🛒 Purchase 🛒",
+                row["title"][:160], f"{BASE_URL}/?activityTab=purchases",
+                priority="max" if row["won"] else "default", group="results")
+        except Exception as exc:
+            log(f"notification failed ({exc.__class__.__name__})")
     state["purchases_seeded"] = True
 
 
