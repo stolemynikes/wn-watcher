@@ -353,6 +353,79 @@ class Signature(unittest.TestCase):
                             watch.signature("b", {"prize": "Box"}))
 
 
+class GiveawayTypeFromTheSocket(unittest.TestCase):
+    """The entry-rule flags come from a socket frame, not the DOM — every
+    product carries this sub-object, mostly false, so the label must stay
+    empty unless something is actually set."""
+
+    def test_open_giveaway_has_no_label(self):
+        self.assertEqual(watch.describe_giveaway_type({
+            "buyerAppreciation": False, "onlyFollowers": False,
+            "onlyDomestic": False, "onlyTriviaWinners": False,
+            "partyPurchase": False}), "")
+
+    def test_none_has_no_label(self):
+        self.assertEqual(watch.describe_giveaway_type(None), "")
+
+    def test_followers_only_is_labelled(self):
+        self.assertEqual(watch.describe_giveaway_type({
+            "onlyFollowers": True}), "Followers only")
+
+    def test_buyers_only_is_labelled(self):
+        self.assertEqual(watch.describe_giveaway_type({
+            "buyerAppreciation": True}), "Buyers only")
+
+    def test_multiple_rules_are_joined(self):
+        label = watch.describe_giveaway_type({
+            "onlyFollowers": True, "onlyDomestic": True})
+        self.assertIn("Followers only", label)
+        self.assertIn("Domestic only", label)
+
+
+class CurrentGiveawayFromTheSocket(unittest.TestCase):
+    """Which learned product is 'the' giveaway right now is whatever the
+    most recent entry-count frame named — not just whichever product we
+    happen to have full details for."""
+
+    def test_nothing_learned_yet_is_none(self):
+        self.assertIsNone(watch.current_giveaway_info({}, "https://wn/live/x"))
+
+    def test_no_active_id_yet_is_none(self):
+        ws_state = {"https://wn/live/x": {"products": {"p1": {"name": "Box"}},
+                                          "active_id": None}}
+        self.assertIsNone(watch.current_giveaway_info(ws_state, "https://wn/live/x"))
+
+    def test_active_id_without_a_product_record_is_none(self):
+        ws_state = {"https://wn/live/x": {"products": {}, "active_id": "p1"}}
+        self.assertIsNone(watch.current_giveaway_info(ws_state, "https://wn/live/x"))
+
+    def test_returns_the_active_products_record(self):
+        ws_state = {"https://wn/live/x": {
+            "products": {"p1": {"name": "Sticker pack"},
+                         "p2": {"name": "Booster box"}},
+            "active_id": "p2"}}
+        info = watch.current_giveaway_info(ws_state, "https://wn/live/x")
+        self.assertEqual(info["name"], "Booster box")
+
+
+class WinnerFromTheSocket(unittest.TestCase):
+    """giveaway_won is a one-shot event; the winner must be handed to the
+    caller exactly once, not re-delivered every poll like ws_giveaway is."""
+
+    def test_no_winner_yet_is_none(self):
+        self.assertIsNone(watch.pop_ws_winner({}, "https://wn/live/x"))
+        ws_state = {"https://wn/live/x": {"winner": None}}
+        self.assertIsNone(watch.pop_ws_winner(ws_state, "https://wn/live/x"))
+
+    def test_a_winner_is_returned_once_then_gone(self):
+        ws_state = {"https://wn/live/x": {
+            "winner": {"pid": "p1", "username": "schpepijn", "prize": "Box"}}}
+        first = watch.pop_ws_winner(ws_state, "https://wn/live/x")
+        self.assertEqual(first["username"], "schpepijn")
+        second = watch.pop_ws_winner(ws_state, "https://wn/live/x")
+        self.assertIsNone(second)
+
+
 class Tracker(unittest.TestCase):
     def feed(self, tracker, readings):
         """Returns the events produced, in order."""
