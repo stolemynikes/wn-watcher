@@ -132,6 +132,38 @@ class TheRealBanner(unittest.TestCase):
         self.assertFalse(r["present"])
 
 
+class TheWinOverlay(unittest.TestCase):
+    """When a giveaway is drawn the stream shows "<name> won the giveaway!"
+    over the video. Confirmed from a screenshot, 2026-08-13."""
+
+    def winner(self, text):
+        return watch.read_live_tab(text, SELECTORS)["winner"]
+
+    def test_reads_the_winner(self):
+        self.assertEqual(self.winner("junasxd won the giveaway!"), "junasxd")
+
+    def test_chat_asking_who_won_is_not_a_winner(self):
+        # Without requiring the exclamation mark and the line start, this
+        # matched and reported the word "who" as the winner.
+        self.assertEqual(self.winner("deezyripz\nwho won the giveaway?"), "")
+
+    def test_chat_mentioning_a_name_is_not_a_winner(self):
+        self.assertEqual(
+            self.winner("justintjee\nyo did schpepijn won the giveaway"), "")
+
+    def test_a_running_giveaway_has_no_winner_yet(self):
+        self.assertEqual(self.winner("Giveaway with 67 entries"), "")
+
+    def test_an_at_prefix_is_tolerated(self):
+        self.assertEqual(self.winner("@junasxd won the giveaway!"), "junasxd")
+
+    def test_it_names_whoever_won_not_only_you(self):
+        # The comparison against my_username is what makes it yours; the
+        # pattern itself must stay neutral.
+        self.assertEqual(self.winner("someone_else won the giveaway!"),
+                         "someone_else")
+
+
 class ThePurchasesPanel(unittest.TestCase):
     """Transcribed from a real screenshot, 2026-08-12."""
 

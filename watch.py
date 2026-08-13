@@ -278,9 +278,14 @@ def read_live_tab(text: str, sel: dict, dom_text: str = "",
             eligible = False
         elif matches(live.get("enterable"), text):
             eligible = True
+    # Shown over the video the moment a giveaway is drawn, naming whoever won.
+    # Read on every poll, not only while a giveaway is "present": by the time
+    # the overlay appears the banner has usually gone.
+    winner = first_group(live.get("winner"), text) or ""
     return {
         "challenge": False,
         "present": present,
+        "winner": winner,
         # The link is authoritative; the text pattern is only a fallback for
         # when the markup changes and the href is no longer there.
         "seller": seller or first_group(live.get("seller"), text) or "",
@@ -561,6 +566,11 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     pw, browser = attach(int(cfg.get("debug_port", 9222)))
     trackers, challenged, warned_tabs = {}, set(), set()
     expanded = set()          # tabs whose banner we have already asked to open
+    won_here = set()          # tabs whose draw overlay we have already alerted on
+    my_username = str(cfg.get("my_username", "")).strip().lstrip("@").lower()
+    if not my_username:
+        log("my_username is not set — wins will only be noticed from the "
+            "purchases tab, not the moment they are drawn")
     may_expand = bool(cfg.get("expand_giveaway", False))
     if may_expand:
         log("expand_giveaway is ON — this will click the banner open, which is "
@@ -613,6 +623,16 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 if reading["present"]:
                     last_match = time.monotonic()
                     warned_silent = False
+
+                # The draw overlay names the winner. Only ours matters, and
+                # only once — it lingers for several polls.
+                if (my_username and reading.get("winner", "").lower()
+                        == my_username and url not in won_here):
+                    won_here.add(url)
+                    announce_win_from_stream(notifier, url,
+                                             reading.get("seller", ""), state)
+                if not reading["present"] and not reading.get("winner"):
+                    won_here.discard(url)
 
                 # Opt-in, once per giveaway: if it is folded shut there is
                 # nothing to read, so ask for it to be opened and pick the
@@ -788,6 +808,24 @@ def parse_purchases(text: str, sel: dict) -> list:
     return rows
 
 
+def announce_win_from_stream(notifier, url: str, seller: str, state: dict) -> None:
+    """You won, seen live in the stream rather than found later.
+
+    The overlay is the fastest possible signal — it appears at the draw — and
+    it comes with the seller and the stream link already known. The purchases
+    tab is still the reliable backstop, because this overlay is on screen for
+    only a few seconds and a poll can miss it.
+    """
+    log(f"WON — {seller or url} (seen in the stream)")
+    state.setdefault("stream_wins", {})[url] = time.time()
+    try:
+        notifier.send("🏆 You won" + (f" — {seller}" if seller else "") + "! 🏆",
+                      "Seen live in the stream. Check the app.",
+                      url, priority="max", group="results")
+    except Exception as exc:
+        log(f"win notification failed ({exc.__class__.__name__})")
+
+
 def check_purchases(page, sel: dict, state: dict, notifier) -> None:
     """New rows on the purchases tab are wins or buys."""
     try:
@@ -815,6 +853,12 @@ def check_purchases(page, sel: dict, state: dict, notifier) -> None:
                 link = match
                 seller = (state["recent_giveaways"][match].get("seller") or "")
                 where = " — tap to open the stream"
+                # Already announced from the draw overlay minutes ago; the row
+                # only adds the item name, which is not worth a second buzz.
+                seen_live = (state.get("stream_wins", {}) or {}).get(match, 0)
+                if time.time() - seen_live < 30 * 60:
+                    log(f"WIN (already alerted live) — {row['title'][:60]}")
+                    continue
         log(f"{'WIN' if row['won'] else 'purchase'} — {row['title'][:70]} "
             f"(€{row['price']:.2f}, {row['status']}){where}")
         try:

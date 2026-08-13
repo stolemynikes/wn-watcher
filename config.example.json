@@ -1,4 +1,6 @@
 {
+  "_comment_username": "Your Whatnot username, exactly as it appears. When a giveaway is drawn the stream shows '<name> won the giveaway!' — this is what that gets compared against. Leave it blank and wins are only noticed later, from the purchases tab.",
+  "my_username": "",
   "notifier": "bark",
   "bark_key": "",
   "ntfy_topic": "CHANGE-ME-long-random-string",

@@ -61,8 +61,13 @@ Install **Bark** (iPhone) or **ntfy** (Android) first.
 - **ntfy**: tap **+**, invent a long weird name like `giveaways-x7k2m9qp4z`.
   Anyone who guesses it can read your notifications, so make it long.
 
-In the panel under **phone alerts**: pick your service, paste the key, **save**,
-then **send test**. Your phone should buzz. Don't go on until it does.
+In the panel under **phone alerts**: pick your service, paste the key, put in
+**your Whatnot username**, **save**, then **send test**. Your phone should
+buzz. Don't go on until it does.
+
+The username matters: when a giveaway is drawn the stream flashes
+*"&lt;name&gt; won the giveaway!"* across the video, and that's how it knows the
+name is yours. Without it, wins are only noticed later from the purchases tab.
 
 ### 2. Open the browser
 
@@ -112,7 +117,7 @@ further down.
 | You see | It means | Do |
 |---|---|---|
 | 🎁 **Giveaway — seller** | A giveaway just started there | Tap it, enter in the app |
-| 🏆 **You won — seller!** | A free item appeared on your purchases page | Tap it — it opens the stream you won in |
+| 🏆 **You won — seller!** | Your name flashed up in the stream, or a free item appeared on your purchases page | Tap it — it opens the stream you won in |
 | 🛒 **Purchase** | Something you paid for appeared there | — |
 | ⚠️ **Challenge on a tab** | Whatnot is showing a robot check in one tab | Close that tab, or solve it yourself |
 | ⚠️ **Watcher may be blind** | It hasn't recognised anything for a while | See below |
@@ -131,7 +136,13 @@ the alert just says "giveaway". Click the banner open in a stream and the name
 comes through. It also tries to read the title straight out of the page even
 when collapsed, which often works.
 
-**Wins come from the purchases tab.** Open
+**Wins are caught two ways.** The fast one is the stream itself: the draw
+flashes *"&lt;name&gt; won the giveaway!"* over the video, and if that's your
+username you're buzzed within a second or two, with a link to the stream. That
+overlay is only up briefly though, so a poll can miss it — which is why the
+slower one still matters.
+
+**The backstop is the purchases tab.** Open
 `whatnot.com/?activityTab=purchases` in that browser and leave it there. A
 giveaway win costs €0.00, which is how it's told apart from something you
 bought — more reliable than looking for the word "giveaway", which paid

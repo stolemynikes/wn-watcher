@@ -24,7 +24,9 @@
     "enterable": "Open Mobile App To Enter",
     "_note_seller": "Only a fallback. The seller is normally taken from their profile link in the page, which is unambiguous — reading it out of the text is unreliable because every line of chat is a username too.",
     "_note_expand": "Only used when expand_giveaway is switched on in config.json. Locates the collapsed banner by its own text — the button has no id, test hook or stable class, only 'cursor-pointer', so the section holding 'Giveaway with N entries' is the anchor.",
-    "expand_button": "section:has(strong:text-matches(\"Giveaway with [\\\\d.,\\\\s]*\\\\d\\\\s*k? entr\", \"i\")) button"
+    "expand_button": "section:has(strong:text-matches(\"Giveaway with [\\\\d.,\\\\s]*\\\\d\\\\s*k? entr\", \"i\")) button",
+    "_note_winner": "Confirmed from a screenshot 2026-08-13: when a giveaway is drawn the stream shows '<username> won the giveaway!' over the video, on its own line and with the exclamation mark. Both are required — without them a chat message like 'who won the giveaway?' matches and the word 'who' is read as a winner. It names whoever won, so it only means YOU won when it matches my_username.",
+    "winner": "^\\s*@?([A-Za-z0-9_.-]{2,30})\\s+won the giveaway!"
   },
   "purchases": {
     "_note": "Confirmed against a real screenshot 2026-08-12. The activity panel opens over the home page at ?activityTab=purchases, and each row has a rigid shape: a status badge, the title, 'Purchased: €x.xx', then 'Date: d/m/yyyy'. Parsed from text rather than a CSS selector — the shape is stable, class names are not.",

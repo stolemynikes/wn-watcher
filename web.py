@@ -52,7 +52,7 @@ SELECTORS_PATH = PROJECT_DIR / "selectors.json"
 STATIC = PROJECT_DIR / "static"
 SERVE_HOST = "127.0.0.1"
 
-EDITABLE = {"notifier", "bark_key", "ntfy_topic", "ntfy_server", "debug_port",
+EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", "debug_port",
             "poll_seconds", "confirm_polls", "silence_warning_minutes",
             "watch_purchases", "panel_password", "panel_host"}
 

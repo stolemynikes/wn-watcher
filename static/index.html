@@ -291,6 +291,13 @@
                  autocomplete="off" spellcheck="false">
         </label>
       </div>
+      <label class="f" style="margin-top:10px">your whatnot username
+        <input type="text" id="myUser" placeholder="e.g. schpepijn"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <p class="hint">When a giveaway is drawn the stream shows "&lt;name&gt; won
+        the giveaway!". This is what that gets compared against — without it,
+        wins are only noticed later from the purchases tab.</p>
       <p class="saved" id="notifSaved"></p>
       <div class="row" style="margin-top:12px">
         <button class="sm" onclick="saveNotifier()">save</button>
@@ -463,11 +470,13 @@ async function loadConfig(){
   setCard('#cardNotif','#notifBadge',set);
   $('#notifSaved').innerHTML=set?`${ICON.ok} saved <b>${esc(hint||'')}</b>`
                                 :`${ICON.todo} nothing saved yet`;
+  $('#myUser').value=c.my_username||'';
   $('#poll').value=c.poll_seconds??2;
   $('#confirm').value=c.confirm_polls??2;
 }
 function saveNotifier(){
   const n=$('#notifier').value,key=$('#notifKey').value.trim(),patch={notifier:n};
+  patch.my_username=$('#myUser').value.trim().replace(/^@/,'');
   if(key)patch[n==='bark'?'bark_key':'ntfy_topic']=key;
   post('/api/config',patch).then(()=>$('#notifKey').value='');
 }
