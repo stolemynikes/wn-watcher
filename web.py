@@ -110,9 +110,32 @@ async def guard(request, call_next):
 # --- reading the browser ----------------------------------------------------
 
 
+TABS_PATH = PROJECT_DIR / "tabs.json"
+TABS_FRESH_SECONDS = 15
+
+
+def published_tabs():
+    """The watcher's own snapshot, if it is recent enough to trust."""
+    try:
+        data = json.loads(TABS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(data.get("at", 0)) > TABS_FRESH_SECONDS:
+        return None
+    return data
+
+
 def attached_tabs(cfg: dict) -> dict:
-    """What the watcher can currently see. Read directly, so the panel is
-    truthful even when the watcher itself is stopped."""
+    """What the watcher can currently see.
+
+    Prefers the running watcher's own snapshot. The panel used to attach to
+    Chrome itself on every poll — a second Playwright connection alongside the
+    watcher's, opened and torn down every 2.5 seconds — which raced and made
+    the card flicker between "watching" and "the browser is not running".
+    Attaching directly is now only for when the watcher is stopped.
+    """
+    if (snapshot := published_tabs()) is not None:
+        return {"browser": True, "tabs": snapshot.get("tabs", [])}
     port = int(cfg.get("debug_port", 9222))
     if not chrome.port_open(port):
         return {"browser": False, "tabs": []}

@@ -33,6 +33,10 @@ PROJECT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_DIR / "config.json"
 SELECTORS_PATH = PROJECT_DIR / "selectors.json"
 STATE_PATH = PROJECT_DIR / "state.json"
+# What the watcher can see, published for the panel. Without this the panel
+# opened its own Playwright connection every 2.5s alongside the watcher's,
+# which raced and intermittently reported "the browser is not running".
+TABS_PATH = PROJECT_DIR / "tabs.json"
 BASE_URL = "https://www.whatnot.com"
 
 
@@ -56,6 +60,18 @@ def prune_state(state: dict) -> None:
     recent = state.get("recent_giveaways", {})
     for url in [u for u, i in recent.items() if i.get("at", 0) < cutoff]:
         del recent[url]
+
+
+def publish_tabs(tabs: list) -> None:
+    """Hand the panel a snapshot instead of making it attach for itself."""
+    try:
+        tmp = TABS_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "browser": True,
+                                   "tabs": tabs}, ensure_ascii=False),
+                       encoding="utf-8")
+        tmp.replace(TABS_PATH)
+    except OSError:
+        pass          # a snapshot the panel cannot read is not worth a crash
 
 
 def save_state(state: dict) -> None:
@@ -586,6 +602,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 log("the browser was closed — stopping.")
                 break
             live_urls = set()
+            snapshot = []
 
             for page in pages:
                 try:
@@ -595,14 +612,21 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 url, text = info["url"], info["text"]
 
                 if watch_purchases and matches(sel["purchases"].get("url_match"), url):
+                    snapshot.append({"url": url, "title": info["title"],
+                                     "kind": "purchases"})
                     check_purchases(page, sel, state, notifier)
                     continue
                 if "/live/" not in url:
+                    snapshot.append({"url": url, "title": info["title"],
+                                     "kind": "other"})
                     continue
 
                 live_urls.add(url)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
                                           info.get("seller", ""))
+
+                snapshot.append({"url": url, "title": info["title"],
+                                 "kind": "live", "reading": reading})
 
                 if reading["challenge"]:
                     if url not in challenged:
@@ -678,6 +702,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 except Exception:
                     pass
 
+            publish_tabs(snapshot)
             prune_state(state)
             save_state(state)
             time.sleep(poll)

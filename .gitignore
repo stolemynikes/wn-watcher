@@ -7,3 +7,4 @@ __pycache__/
 watcher.log
 .watcher.pid
 probe-react.json
+tabs.json
