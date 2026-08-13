@@ -593,6 +593,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             "the one thing here that touches a page")
     last_match = time.monotonic()
     warned_silent = False
+    warned_no_tabs = False
     log("attached — watching your tabs. Nothing here opens or closes them.")
 
     try:
@@ -682,8 +683,11 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             for gone in set(trackers) - live_urls:
                 trackers.pop(gone, None)
 
-            if not pages and not warned_silent:
+            if not pages and not warned_no_tabs:
+                warned_no_tabs = True
                 log("no Whatnot tabs open — waiting")
+            elif pages:
+                warned_no_tabs = False
 
             # The silent failure of this design is Whatnot changing their
             # markup: everything keeps running and nothing is ever detected.
