@@ -9,11 +9,13 @@
   "poll_seconds": 2,
   "_comment_mute": "Six streams at once is unbearable otherwise. Measured safe: --mute-audio is applied in Chrome's audio pipeline and is invisible to the page — video.muted, volume and AudioContext.state are all unchanged.",
   "mute_audio": true,
-  "_comment_expand": "Leave this false. Decided 2026-08-13 after probing a live page: the prize and eligibility exist nowhere but rendered text, and the banner is folded shut, so a click is the only way to read them. Not worth it — Whatnot runs Kasada and ships a bot-detection field literally named playwright_bot, and ~70 unprompted clicks an hour is a pattern. The switch is kept because the finding might change; the default is the decision. See SPEC.md.",
+  "_comment_expand": "Leave this false — and it can stay off for good now. Prize, entry rule (followers/buyers/domestic-only), your own eligibility, AND the winner are all read passively from the tab's own WebSocket frames (added 2026-08-13). Nothing left that clicking would surface. Kept only because a future Whatnot change could break the socket reading; if that ever happens, see SPEC.md before turning this on — Whatnot runs Kasada and ships a bot-detection field literally named playwright_bot, and ~70 unprompted clicks an hour is a pattern.",
   "expand_giveaway": false,
   "_comment_confirm": "How many consecutive polls a giveaway must be visible before alerting. 2 rides out a half-rendered frame without costing real time.",
   "confirm_polls": 2,
   "_comment_silence": "Warn if no tab has matched anything for this long — the silent failure of this design is Whatnot changing their markup.",
   "silence_warning_minutes": 45,
-  "watch_purchases": true
+  "watch_purchases": true,
+  "_comment_purchases_poll": "How often (seconds) the purchases tab's own Apollo query is asked to refetch itself. Added 2026-08-13: that page never refreshes on its own — confirmed by hand — so a real win could sit unseen forever otherwise. This is one real network request, the same one a manual reload makes, so it is throttled well below anything pattern-like; 60s reads as an ordinary glance back at an open tab, not a bot.",
+  "purchases_poll_seconds": 60
 }

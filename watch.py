@@ -8,14 +8,29 @@
 
 One command. It starts the browser if it isn't already up, attaches, and then
 waits — you open your streams whenever you like, before or after, and it picks
-them up. Reading the page rather than the socket is what allows that. It never
-navigates, opens, closes or reloads a tab. Entering a giveaway is always
-yours to do by hand — that is Whatnot's rule and this tool does not bend it.
+them up. Reading the page rather than driving it is the default. It never
+navigates, opens, closes or reloads a tab, and never enters a giveaway — that
+is Whatnot's rule and this tool does not bend it.
 
-Why the DOM and not the WebSocket: a socket already open when we attach is
-invisible to us — measured, zero frames, via both Playwright's event and raw
-CDP. Reading the page has no such restriction, which is what lets you open
-your tabs first and start this afterwards.
+Two narrow exceptions, both added 2026-08-13:
+
+* The purchases tab never refreshes its own data — confirmed by hand, it is a
+  one-shot query with no socket and no self-poll, so a real win could sit
+  unseen forever. Fixed by calling the page's own already-mounted Apollo
+  query's refetch() on a slow interval (`purchases_poll_seconds`) — the same
+  request the app makes on a manual reload, just triggered by us instead.
+* The giveaway banner's prize, entry rule (followers/buyers/domestic-only),
+  YOUR OWN eligibility, and the winner are all absent from the DOM and from
+  React state while collapsed — confirmed by probing both, in depth, see
+  SPEC.md. But the WebSocket frames that already arrive to drive the visible
+  entry counter carry all four (`giveaway_started`, `giveaway_entered`,
+  `giveaway_won`), and those are read passively — no request of ours
+  involved. An earlier probe here concluded an already-open socket is
+  invisible at attach time ("measured, zero frames"); that measurement
+  blocked on a plain time.sleep(), which starves this driver's event
+  dispatch entirely regardless of what is really arriving. Waiting via
+  page.wait_for_timeout() instead surfaced real frames immediately —
+  confirmed live against several real giveaways, including two real draws.
 """
 
 import argparse
@@ -566,6 +581,156 @@ def cmd_test(cfg: dict) -> None:
     print("Sent — check your phone.")
 
 
+# --- reading the giveaway itself from the socket -----------------------
+#
+# Confirmed live 2026-08-13: the frames that already arrive on a live tab to
+# drive the visible entry counter also carry everything else about the
+# giveaway — prize, entry rule, YOUR OWN eligibility, and eventually the
+# winner — none of which ever reaches the DOM or React state while the
+# banner is collapsed (see the module docstring). This only reads frames
+# already delivered to the tab; it never sends anything of its own.
+#
+# Frame shape (Socket.IO-ish, undocumented, may drift):
+#   [ackId, null, "auction:<livestreamId>" | "commerce:<livestreamId>",
+#    eventName, data]
+#
+# Events used here, by name:
+#   giveaway_started            — fires the instant a giveaway begins. data
+#                                  is {"id", "product": {...}, "giveaway"}
+#                                  where product.id == data.id; the single
+#                                  most authoritative "this is the current
+#                                  giveaway" signal there is.
+#   giveaway_entry_count_updated — {"entryCount", "productId"}; the ongoing
+#                                  heartbeat that also names the current
+#                                  product for tabs where _started was missed
+#                                  (already open before we attached).
+#   product_updated / product_pinned / auction_started — same product-record
+#                                  shape as giveaway_started's "product", but
+#                                  fires for every product, giveaway or not.
+#                                  Every one carries a "giveaway" sub-object,
+#                                  mostly false/null; only a real giveaway
+#                                  sets any flag true, and onlyDomestic in
+#                                  particular defaults true on ordinary
+#                                  listings — so this alone is not proof,
+#                                  only the entry-count/started events say
+#                                  which product id is on screen right now.
+#   giveaway_won                 — fires once, at the draw. data.giveaway
+#                                  .productId names which giveaway; the
+#                                  winner is data.product.purchaserUser
+#                                  .username — winning is modelled as buying
+#                                  the item for €0, so the winner is simply
+#                                  whoever "purchased" it. data.giveawayEntries
+#                                  is every entrant, not the winner — do not
+#                                  confuse the two.
+#   giveaway_entered              — fires for OUR OWN account's entry state:
+#                                  {"giveaway": {"productId"},
+#                                   "isUserEligibleForGiveaway": bool}. This
+#                                  is the one thing expand_giveaway used to
+#                                  exist for — personal eligibility — now
+#                                  read passively instead of by clicking.
+
+_GIVEAWAY_TYPE_EVENTS = ("product_updated", "product_pinned", "auction_started",
+                        "giveaway_started")
+
+
+def attach_giveaway_socket(page, ws_state: dict) -> None:
+    """Start passively learning this tab's giveaway content, once per tab.
+
+    Best-effort: a tab that will not attach (closed mid-poll, CDP hiccup) is
+    silently skipped and retried on a later poll — this must never be the
+    reason a giveaway alert is delayed or dropped.
+    """
+    url = page.url
+    if url in ws_state:
+        return
+    try:
+        cdp = page.context.new_cdp_session(page)
+        cdp.send("Network.enable")
+    except Exception:
+        return
+
+    # winner: set once by on_frame (callback thread), consumed exactly once
+    # by pop_ws_winner (main thread) — a plain dict key survives that under
+    # the GIL without a lock, same as active_id/products already do below.
+    entry = {"products": {}, "active_id": None, "winner": None, "cdp": cdp}
+
+    def on_frame(params):
+        payload = params.get("response", {}).get("payloadData", "")
+        try:
+            arr = json.loads(payload)
+        except (ValueError, TypeError):
+            return
+        if not isinstance(arr, list) or len(arr) < 5:
+            return
+        event, data = arr[3], arr[4]
+        if not isinstance(data, dict):
+            return
+        if event == "giveaway_entry_count_updated":
+            pid = data.get("productId")
+            if pid:
+                entry["active_id"] = pid
+        elif event in _GIVEAWAY_TYPE_EVENTS:
+            product = data.get("product") if "product" in data else data
+            if not isinstance(product, dict):
+                return
+            pid, giveaway = product.get("id"), product.get("giveaway")
+            if pid and giveaway:
+                entry["products"][pid] = {
+                    "name": product.get("name") or "",
+                    "buyerAppreciation": bool(giveaway.get("buyerAppreciation")),
+                    "onlyFollowers": bool(giveaway.get("onlyFollowers")),
+                    "onlyDomestic": bool(giveaway.get("onlyDomestic")),
+                    "onlyTriviaWinners": bool(giveaway.get("onlyTriviaWinners")),
+                    "partyPurchase": bool(giveaway.get("partyPurchase")),
+                    "eligible": entry["products"].get(pid, {}).get("eligible"),
+                }
+            # giveaway_started is the clearest possible "this one is current"
+            # signal — no reason to wait for the next entry-count tick.
+            if event == "giveaway_started" and pid:
+                entry["active_id"] = pid
+        elif event == "giveaway_won":
+            gv = data.get("giveaway") or {}
+            product = data.get("product") or {}
+            purchaser = product.get("purchaserUser") or {}
+            pid, username = gv.get("productId"), purchaser.get("username")
+            if pid and username:
+                entry["winner"] = {"pid": pid, "username": username.lower(),
+                                   "prize": product.get("name") or ""}
+        elif event == "giveaway_entered":
+            gv = data.get("giveaway") or {}
+            pid = gv.get("productId")
+            eligible = data.get("isUserEligibleForGiveaway")
+            if pid and eligible is not None:
+                entry["products"].setdefault(pid, {})["eligible"] = bool(eligible)
+
+    try:
+        cdp.on("Network.webSocketFrameReceived", on_frame)
+    except Exception:
+        return
+    ws_state[url] = entry
+
+
+def current_giveaway_info(ws_state: dict, url: str) -> dict | None:
+    """The learned prize + entry-rule for whichever product the socket most
+    recently named as the active giveaway on this tab, or None until both a
+    count update (or giveaway_started) and that product's own record have
+    arrived."""
+    entry = ws_state.get(url)
+    if not entry or not entry["active_id"]:
+        return None
+    return entry["products"].get(entry["active_id"])
+
+
+def pop_ws_winner(ws_state: dict, url: str) -> dict | None:
+    """The most recent giveaway_won on this tab, consumed once so the same
+    draw is never handed to the caller twice."""
+    entry = ws_state.get(url)
+    if not entry:
+        return None
+    winner, entry["winner"] = entry["winner"], None
+    return winner
+
+
 def cmd_watch(cfg: dict, sel: dict) -> None:
     if not chrome.ensure_running(cfg):
         sys.exit("Could not get a browser up. Nothing was changed.")
@@ -578,11 +743,14 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     confirm = max(1, int(cfg.get("confirm_polls", 2)))
     silence_after = max(0, int(cfg.get("silence_warning_minutes", 45))) * 60
     watch_purchases = bool(cfg.get("watch_purchases", True))
+    purchases_poll_seconds = max(15, int(cfg.get("purchases_poll_seconds", 60)))
 
     pw, browser = attach(int(cfg.get("debug_port", 9222)))
     trackers, challenged, warned_tabs = {}, set(), set()
     expanded = set()          # tabs whose banner we have already asked to open
     won_here = set()          # tabs whose draw overlay we have already alerted on
+    ws_state = {}             # url -> learned giveaway info from socket frames
+    purchases_last_call = {"t": 0.0}   # throttle for the purchases refetch()
     my_username = str(cfg.get("my_username", "")).strip().lstrip("@").lower()
     if not my_username:
         log("my_username is not set — wins will only be noticed from the "
@@ -615,7 +783,9 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 if watch_purchases and matches(sel["purchases"].get("url_match"), url):
                     snapshot.append({"url": url, "title": info["title"],
                                      "kind": "purchases"})
-                    check_purchases(page, sel, state, notifier)
+                    if time.monotonic() - purchases_last_call["t"] >= purchases_poll_seconds:
+                        purchases_last_call["t"] = time.monotonic()
+                        check_purchases_api(page, state, notifier)
                     continue
                 if "/live/" not in url:
                     snapshot.append({"url": url, "title": info["title"],
@@ -623,8 +793,19 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     continue
 
                 live_urls.add(url)
+                attach_giveaway_socket(page, ws_state)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
                                           info.get("seller", ""))
+                ws_info = current_giveaway_info(ws_state, url)
+                if ws_info:
+                    reading["ws_giveaway"] = ws_info
+                    if not reading.get("prize"):
+                        reading["prize"] = ws_info["name"]
+                    # Personal eligibility, straight from OUR account's own
+                    # giveaway_entered frame — the one thing that otherwise
+                    # required expand_giveaway (a click) to ever see.
+                    if ws_info.get("eligible") is not None:
+                        reading["eligible"] = ws_info["eligible"]
 
                 snapshot.append({"url": url, "title": info["title"],
                                  "kind": "live", "reading": reading})
@@ -649,10 +830,18 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     last_match = time.monotonic()
                     warned_silent = False
 
-                # The draw overlay names the winner. Only ours matters, and
-                # only once — it lingers for several polls.
-                if (my_username and reading.get("winner", "").lower()
-                        == my_username and url not in won_here):
+                # The socket's giveaway_won fires the instant the draw
+                # happens — structured, reliable, and (so far) faster than
+                # the DOM overlay ever gets confirmed by a poll. The overlay
+                # text stays as a backstop for tabs where the socket was
+                # already open before we attached and giveaway_won was
+                # missed. Both share `won_here`, so whichever fires first
+                # is the only one that announces.
+                ws_winner = pop_ws_winner(ws_state, url)
+                overlay_winner = reading.get("winner", "").lower()
+                won_username = (ws_winner["username"] if ws_winner
+                                else overlay_winner)
+                if my_username and won_username == my_username and url not in won_here:
                     won_here.add(url)
                     announce_win_from_stream(notifier, url,
                                              reading.get("seller", ""), state)
@@ -682,6 +871,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
             for gone in set(trackers) - live_urls:
                 trackers.pop(gone, None)
+            for gone in set(ws_state) - live_urls:
+                ws_state.pop(gone, None)
 
             if not pages and not warned_no_tabs:
                 warned_no_tabs = True
@@ -709,7 +900,18 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             publish_tabs(snapshot)
             prune_state(state)
             save_state(state)
-            time.sleep(poll)
+            # Not time.sleep(): that blocks this process's OS thread, which
+            # starves Playwright's own event dispatch along with it — no
+            # queued socket-frame callback fires until sleep returns. Waiting
+            # through Playwright instead keeps ws_state filling in live,
+            # between polls, not just at the moment one happens to land.
+            if pages:
+                try:
+                    pages[0].wait_for_timeout(poll * 1000)
+                except Exception:
+                    time.sleep(poll)
+            else:
+                time.sleep(poll)
     except KeyboardInterrupt:
         pass
     finally:
@@ -725,6 +927,26 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 pass      # already gone; nothing here is worth a traceback
 
 
+def describe_giveaway_type(ws_giveaway: dict | None) -> str:
+    """A short label for who can enter, learned from the socket rather than
+    guessed — 'Followers only', 'Buyers only' — empty if the giveaway is open
+    to anyone or we have not learned it yet."""
+    if not ws_giveaway:
+        return ""
+    parts = []
+    if ws_giveaway.get("buyerAppreciation"):
+        parts.append("Buyers only")
+    if ws_giveaway.get("onlyFollowers"):
+        parts.append("Followers only")
+    if ws_giveaway.get("onlyTriviaWinners"):
+        parts.append("Trivia winners only")
+    if ws_giveaway.get("partyPurchase"):
+        parts.append("Party purchase")
+    if ws_giveaway.get("onlyDomestic"):
+        parts.append("Domestic only")
+    return " · ".join(parts)
+
+
 def announce_giveaway(notifier, url: str, reading: dict,
                       remember: dict | None = None) -> None:
     """Push in the shape the old radar used, which reads well on a lock screen:
@@ -736,6 +958,7 @@ def announce_giveaway(notifier, url: str, reading: dict,
     seller = reading.get("seller") or ""
     prize = reading.get("prize") or ""
     eligible = reading.get("eligible")
+    type_label = describe_giveaway_type(reading.get("ws_giveaway"))
 
     # Silence only what the page has explicitly said you cannot enter.
     # Unknown is announced: a missed giveaway costs an entry, a spare buzz
@@ -746,6 +969,8 @@ def announce_giveaway(notifier, url: str, reading: dict,
 
     title = f"🎁 Giveaway — {seller} 🎁" if seller else "🎁 Giveaway 🎁"
     body = prize or "A giveaway just started."
+    if type_label:
+        body += f"\n{type_label}"
     body += "\nOpen the app to enter."
 
     if remember is not None and prize:
@@ -753,7 +978,8 @@ def announce_giveaway(notifier, url: str, reading: dict,
         # purchases row has no link of its own.
         remember[url] = {"prize": prize, "seller": seller, "at": time.time()}
 
-    log(f"GIVEAWAY — {seller or '?'} — {prize or '(title not on screen)'} — {url}")
+    log(f"GIVEAWAY — {seller or '?'} — {prize or '(title not on screen)'}"
+        f"{' — ' + type_label if type_label else ''} — {url}")
     try:
         notifier.send(title, body, url, priority="max", group="giveaways")
     except Exception as exc:
@@ -810,6 +1036,12 @@ def match_stream(title: str, remembered: dict, now: float,
 def parse_purchases(text: str, sel: dict) -> list:
     """Rows from the activity panel: (status, title, price, date, won).
 
+    Superseded 2026-08-13 by fetch_purchases_via_api() below — this page
+    turned out never to refresh its own text on its own, so this regex could
+    scrape only whatever was on screen at page-load, forever. Kept, not
+    deleted: still what `probe` reports against, and the fallback if a future
+    Whatnot build ever removes window.__APOLLO_CLIENT__.
+
     Read from the text rather than a CSS selector — the shape is stable and
     class names are not. A giveaway win costs nothing, so the price is what
     marks it, which is far more reliable than looking for the word "giveaway":
@@ -837,6 +1069,57 @@ def parse_purchases(text: str, sel: dict) -> list:
     return rows
 
 
+GET_MY_PURCHASES_JS = """
+    async () => {
+        const client = window.__APOLLO_CLIENT__;
+        if (!client) return {error: "no apollo client on this page"};
+        let target = null;
+        for (const [, q] of client.getObservableQueries()) {
+            const name = q.queryName || (q.options && q.options.query &&
+                q.options.query.definitions[0].name.value);
+            if (name === "GetMyPurchases") { target = q; break; }
+        }
+        if (!target) return {error: "GetMyPurchases is not mounted on this tab"};
+        const res = await target.refetch();
+        const edges = (res.data && res.data.myOrders &&
+            res.data.myOrders.edges) || [];
+        return {ok: true, edges: edges.map(e => ({
+            uuid: e.node.uuid,
+            status: e.node.status,
+            prettyStatus: e.node.prettyStatus,
+            amount: (e.node.total && e.node.total.amount) ?? -1,
+            currency: (e.node.total && e.node.total.currency) || "",
+            createdAt: e.node.createdAt,
+            title: (e.node.items && e.node.items.edges[0] &&
+                e.node.items.edges[0].node.listing &&
+                e.node.items.edges[0].node.listing.title) || "",
+        }))};
+    }
+"""
+
+
+def fetch_purchases_via_api(page) -> list | None:
+    """Ask the page's own already-mounted Apollo query to refetch itself —
+    the same GetMyPurchases request the app makes on a manual reload, just
+    triggered by us. Structured JSON beats the old text regex outright: a
+    stable `uuid` instead of a title|date|price composite, and it works at
+    all — the purchases page is a one-shot fetch with no socket and no
+    self-poll, confirmed by hand 2026-08-13, so the DOM text here never
+    changes on its own no matter how long or how often it is read.
+
+    None on any failure — a missing Apollo client, an unmounted query, a
+    network hiccup. The caller just tries again next interval; nothing here
+    is worth crashing the watcher over.
+    """
+    try:
+        result = page.evaluate(GET_MY_PURCHASES_JS)
+    except Exception:
+        return None
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+    return result.get("edges") or []
+
+
 def announce_win_from_stream(notifier, url: str, seller: str, state: dict) -> None:
     """You won, seen live in the stream rather than found later.
 
@@ -855,19 +1138,28 @@ def announce_win_from_stream(notifier, url: str, seller: str, state: dict) -> No
         log(f"win notification failed ({exc.__class__.__name__})")
 
 
-def check_purchases(page, sel: dict, state: dict, notifier) -> None:
-    """New rows on the purchases tab are wins or buys."""
-    try:
-        info = page.evaluate(PAGE_TEXT)
-    except Exception:
+def check_purchases_api(page, state: dict, notifier) -> None:
+    """New orders since the last refetch are wins or buys.
+
+    Keyed by `uuid` — a distinct namespace ("api:...") from the old
+    title|date|price keys `seen_purchases` used to hold, so nothing here can
+    collide with entries the previous, DOM-scraping version left behind.
+    Those old keys just age out of relevance; they are never read by this
+    path. First call after upgrading seeds silently, exactly like the old
+    version did on its very first run — otherwise every order you have ever
+    won or bought would fire a notification at once.
+    """
+    edges = fetch_purchases_via_api(page)
+    if edges is None:
         return
-    for row in parse_purchases(info["text"], sel):
-        key = f"{row['title']}|{row['date']}|{row['price']}"
-        if key in state["seen_purchases"]:
+    for row in edges:
+        key = f"api:{row['uuid']}"
+        if not row["uuid"] or key in state["seen_purchases"]:
             continue
         state["seen_purchases"][key] = datetime.now(timezone.utc).isoformat()
+        won = row["amount"] == 0
         # First sight would otherwise announce your entire purchase history.
-        if not state.get("purchases_seeded"):
+        if not state.get("purchases_api_seeded"):
             continue
         # Point a win at the stream it came from, so the notification behaves
         # like the giveaway one did. Falls back to the purchases page whenever
@@ -875,7 +1167,7 @@ def check_purchases(page, sel: dict, state: dict, notifier) -> None:
         # than a generic link.
         link = f"{BASE_URL}/?activityTab=purchases"
         seller, where = "", ""
-        if row["won"]:
+        if won:
             match = match_stream(row["title"], state.get("recent_giveaways", {}),
                                  time.time())
             if match:
@@ -888,17 +1180,18 @@ def check_purchases(page, sel: dict, state: dict, notifier) -> None:
                 if time.time() - seen_live < 30 * 60:
                     log(f"WIN (already alerted live) — {row['title'][:60]}")
                     continue
-        log(f"{'WIN' if row['won'] else 'purchase'} — {row['title'][:70]} "
-            f"(€{row['price']:.2f}, {row['status']}){where}")
+        price = row["amount"] / 100.0 if row["amount"] >= 0 else 0.0
+        log(f"{'WIN' if won else 'purchase'} — {row['title'][:70]} "
+            f"({price:.2f} {row['currency']}, {row['prettyStatus']}){where}")
         try:
             title = ("🏆 You won" + (f" — {seller}" if seller else "") + "! 🏆"
-                     if row["won"] else "🛒 Purchase 🛒")
+                     if won else "🛒 Purchase 🛒")
             notifier.send(title, row["title"][:160], link,
-                          priority="max" if row["won"] else "default",
+                          priority="max" if won else "default",
                           group="results")
         except Exception as exc:
             log(f"notification failed ({exc.__class__.__name__})")
-    state["purchases_seeded"] = True
+    state["purchases_api_seeded"] = True
 
 
 def main() -> None:
