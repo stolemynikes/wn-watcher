@@ -389,9 +389,17 @@ def attach(port: int):
 
 def whatnot_pages(browser):
     """Every tab currently on Whatnot. Recomputed each poll, so tabs you open
-    or close during a run are picked up without restarting."""
+    or close during a run are picked up without restarting.
+
+    Returns None if the browser has gone away — closing every tab or quitting
+    Chrome drops the connection, and that is a reason to stop, not a crash.
+    """
     out = []
-    for ctx in browser.contexts:
+    try:
+        contexts = list(browser.contexts)
+    except Exception:
+        return None
+    for ctx in contexts:
         for page in ctx.pages:
             try:
                 if "whatnot.com" in (page.url or ""):
@@ -564,6 +572,9 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     try:
         while True:
             pages = whatnot_pages(browser)
+            if pages is None:
+                log("the browser was closed — stopping.")
+                break
             live_urls = set()
 
             for page in pages:
@@ -656,10 +667,13 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
         log("stopping — your tabs are untouched.")
         try:
             save_state(state)
-            browser.close()
-        except Exception:
-            pass
-        pw.stop()
+        except Exception as exc:
+            log(f"could not save state ({exc.__class__.__name__})")
+        for shut in (browser.close, pw.stop):
+            try:
+                shut()
+            except Exception:
+                pass      # already gone; nothing here is worth a traceback
 
 
 def announce_giveaway(notifier, url: str, reading: dict,

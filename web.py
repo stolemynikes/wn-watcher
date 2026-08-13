@@ -601,6 +601,11 @@ def serve(host: str, port: int) -> None:
             server.run()
         except SystemExit:
             return print(f"\n  Could not listen on {host}:{port}.\n")
+        except KeyboardInterrupt:
+            # A real Ctrl+C in a terminal races uvicorn's own signal handler,
+            # and when it wins, asyncio re-raises it out of server.run(). An
+            # earlier test missed this because kill -INT let uvicorn win.
+            pass
         return print("\n  Panel stopped.\n")
 
     # Windows: the proactor loop wakes for socket I/O, not signals, so an idle
