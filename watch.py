@@ -52,6 +52,11 @@ STATE_PATH = PROJECT_DIR / "state.json"
 # opened its own Playwright connection every 2.5s alongside the watcher's,
 # which raced and intermittently reported "the browser is not running".
 TABS_PATH = PROJECT_DIR / "tabs.json"
+# The raw giveaway_won frame, overwritten on every draw. entrants_from()'s
+# read of giveawayEntries is unverified against a real frame — this exists
+# so a mis-parse can be diagnosed from what Whatnot actually sent, without
+# adding a second, riskier CDP capture path just to look once.
+DEBUG_ENTRANTS_PATH = PROJECT_DIR / "debug-entrants.json"
 BASE_URL = "https://www.whatnot.com"
 
 
@@ -112,6 +117,16 @@ PAGE_TEXT = r"""() => ({
     // never for presence or eligibility: those must reflect what is really on
     // screen.
     domText: (document.body && document.body.textContent || '').slice(0, 40000),
+    // Cloudflare's own markup, which a real interstitial always carries and
+    // an ordinary Whatnot page never does — measured across six live tabs on
+    // 2026-08-18: not one of these selectors matched, and none of the pages
+    // set window._cf_chl_opt. The wording alone cannot be trusted, because
+    // chat is English prose and says things like "just a moment".
+    challengeDom: !!(window._cf_chl_opt || document.querySelector(
+        'script[src*="challenges.cloudflare.com"], ' +
+        'iframe[src*="challenges.cloudflare.com"], ' +
+        '#challenge-form, #challenge-running, #cf-chl-widget, ' +
+        'form[action*="__cf_chl"]')),
     // The seller, from their own profile link. More reliable than reading it
     // out of the text: the page is full of usernames — every line of chat is
     // one — and the href is unambiguous.
@@ -287,16 +302,35 @@ def read_prize(live: dict, text: str, dom_text: str = "") -> str:
             or "")
 
 
+# A real Cloudflare interstitial replaces the entire page: a line of text, a
+# spinner, nothing else. Six healthy live tabs measured 2026-08-18 carried
+# 2781-5856 characters of visible text, so anything near this size is a
+# working stream, whatever wording happens to be in its chat.
+CHALLENGE_MAX_TEXT = 1500
+
+
 def read_live_tab(text: str, sel: dict, dom_text: str = "",
-                  seller: str = "") -> dict:
+                  seller: str = "", challenge_dom: bool = False) -> dict:
     """Turn a stream tab's text into a giveaway reading.
 
     `text` is what is on screen; `dom_text` may additionally contain nodes the
     page has built but collapsed. Only the prize falls back to the second one.
     """
     live = sel.get("live", {})
+    # Wording alone is not enough. Measured 2026-08-18: a healthy tab alerted
+    # as challenged because the phrase was somewhere in a full page — chat is
+    # English prose and "just a moment" is ordinary English. A real challenge
+    # brings Cloudflare's own markup, or at minimum a page with nothing else
+    # on it, so require one of those two before believing it.
     if matches(live.get("challenge"), text):
-        return {"challenge": True, "present": False}
+        if challenge_dom or len(text) < CHALLENGE_MAX_TEXT:
+            return {"challenge": True, "present": False}
+        # Kept so the near-miss is visible in the log rather than silent —
+        # if Whatnot ever serves a challenge inside a full-looking page,
+        # this is the line that will say so.
+        phrase_only = True
+    else:
+        phrase_only = False
     present = matches(live.get("giveaway_present"), text)
     entries = parse_count(first_group(live.get("entries"), text))
     # Tri-state on purpose. The banner is collapsed by default, and collapsed it
@@ -315,6 +349,7 @@ def read_live_tab(text: str, sel: dict, dom_text: str = "",
     winner = first_group(live.get("winner"), text) or ""
     return {
         "challenge": False,
+        "challenge_phrase": phrase_only,
         "present": present,
         "winner": winner,
         # The link is authoritative; the text pattern is only a fallback for
@@ -485,7 +520,8 @@ def cmd_probe(cfg: dict, sel: dict) -> None:
                           "fix row_selector)")
             else:
                 reading = read_live_tab(text, sel, info.get("domText", ""),
-                                          info.get("seller", ""))
+                                          info.get("seller", ""),
+                                          bool(info.get("challengeDom")))
                 print("\n  pattern            result")
                 for name in ("giveaway_present", "entries", "prize",
                              "buyers_only", "followers_only", "challenge"):
@@ -633,6 +669,32 @@ _GIVEAWAY_TYPE_EVENTS = ("product_updated", "product_pinned", "auction_started",
                         "giveaway_started")
 
 
+def entrants_from(raw) -> set[str] | None:
+    """Lowercase usernames out of a giveaway_won frame's entrant list.
+
+    The shape of each entry is not documented anywhere we can read (unlike
+    the winner, which is modelled as a purchase and so has a known
+    purchaserUser field) — try every plausible spot a username could sit
+    and skip whatever does not match. Returns None (not an empty set) when
+    raw is not a list at all, so callers can tell "no entrants field" apart
+    from "an empty giveaway".
+    """
+    if not isinstance(raw, list):
+        return None
+    out = set()
+    for item in raw:
+        if isinstance(item, str):
+            out.add(item.lower())
+            continue
+        if not isinstance(item, dict):
+            continue
+        for spot in (item, item.get("user"), item.get("purchaserUser")):
+            if isinstance(spot, dict) and isinstance(spot.get("username"), str):
+                out.add(spot["username"].lower())
+                break
+    return out
+
+
 def attach_giveaway_socket(page, ws_state: dict) -> None:
     """Start passively learning this tab's giveaway content, once per tab.
 
@@ -652,7 +714,8 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
     # winner: set once by on_frame (callback thread), consumed exactly once
     # by pop_ws_winner (main thread) — a plain dict key survives that under
     # the GIL without a lock, same as active_id/products already do below.
-    entry = {"products": {}, "active_id": None, "winner": None, "cdp": cdp}
+    entry = {"products": {}, "active_id": None, "winner": None,
+             "counts": {}, "cdp": cdp}
 
     def on_frame(params):
         payload = params.get("response", {}).get("payloadData", "")
@@ -669,6 +732,13 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
             pid = data.get("productId")
             if pid:
                 entry["active_id"] = pid
+                # The real pool size at the draw — needed to tell a complete
+                # entrant list (<=50) from a truncated one, which is the only
+                # case absence from the list means anything (see the shadow
+                # tally below). Keep the latest tick per product.
+                count = data.get("entryCount")
+                if isinstance(count, int):
+                    entry["counts"][pid] = count
         elif event in _GIVEAWAY_TYPE_EVENTS:
             product = data.get("product") if "product" in data else data
             if not isinstance(product, dict):
@@ -694,8 +764,24 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
             purchaser = product.get("purchaserUser") or {}
             pid, username = gv.get("productId"), purchaser.get("username")
             if pid and username:
-                entry["winner"] = {"pid": pid, "username": username.lower(),
-                                   "prize": product.get("name") or ""}
+                entry["winner"] = {
+                    "pid": pid, "username": username.lower(),
+                    "prize": product.get("name") or "",
+                    # Every entrant, not just the winner — shape isn't
+                    # documented anywhere, so pull every plausible username
+                    # spot rather than assume one. Worst case: an entry we
+                    # can't read is silently skipped, never a crash.
+                    "entrants": entrants_from(data.get("giveawayEntries")),
+                    "was_eligible": entry["products"].get(pid, {}).get("eligible"),
+                    "entry_count": entry["counts"].get(pid),
+                }
+                try:
+                    DEBUG_ENTRANTS_PATH.write_text(json.dumps(
+                        {"at": time.time(), "url": url, "pid": pid,
+                         "winner": username, "raw_entries": data.get("giveawayEntries")},
+                        indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception:
+                    pass
         elif event == "giveaway_entered":
             gv = data.get("giveaway") or {}
             pid = gv.get("productId")
@@ -731,6 +817,212 @@ def pop_ws_winner(ws_state: dict, url: str) -> dict | None:
     return winner
 
 
+# --- where the seller ships from -------------------------------------------
+#
+# "Domestic only" restricts a giveaway to the seller's own country, so that
+# country is what turns onlyDomestic into "can I actually enter this". The
+# socket does not carry it — measured 2026-08-18, a product_updated frame has
+# the price currency, the seller's user id and the listing id, and nothing
+# geographic. The page's own Apollo cache does:
+#
+#   ListingNode.shippingDetails  "Ships from United Kingdom" / "Ships from
+#                                Germany", and null for a seller in YOUR own
+#                                country — Whatnot renders that line only when
+#                                the two countries differ. Measured across five
+#                                live streams: 2 NL sellers, 34 listings, all
+#                                null; 3 foreign sellers, 53 listings, every
+#                                one naming its country.
+#   AddressNode.countryCode      your own country, so nothing here is pinned
+#                                to one buyer.
+#   getShippingQuotes(…).quotes[].shippingEstimate.tariffDisclosures
+#                                "Since this seller ships from GB, NL Customs
+#                                may charge tariffs…" — both countries as ISO
+#                                codes, which beats matching country names,
+#                                but empty inside the EU (a German seller gets
+#                                none), so it can confirm and never carry this
+#                                on its own.
+#
+# Currency is not a substitute: a German seller prices in EUR exactly like a
+# Dutch one, so it separates GB and US sellers only.
+
+SELLER_ORIGIN_JS = r"""
+    () => {
+        const client = window.__APOLLO_CLIENT__;
+        if (!client) return {error: "no apollo client on this page"};
+        const data = client.cache.extract();
+        let listings = 0, shipsFrom = "", buyerCountry = "";
+        for (const value of Object.values(data)) {
+            if (!value || typeof value !== "object") continue;
+            if (value.__typename === "ListingNode") {
+                listings++;
+                if (typeof value.shippingDetails === "string" &&
+                    value.shippingDetails) shipsFrom = value.shippingDetails;
+            } else if (value.__typename === "AddressNode" && value.countryCode) {
+                buyerCountry = value.countryCode;
+            }
+        }
+        // The one place both countries appear as ISO codes. Only written when
+        // customs actually apply, so it is absent for every EU seller.
+        let pair = null;
+        for (const [key, value] of Object.entries(data.ROOT_QUERY || {})) {
+            if (!key.startsWith("getShippingQuotes") || !value) continue;
+            for (const quote of value.quotes || []) {
+                const est = quote && quote.shippingEstimate;
+                for (const line of (est && est.tariffDisclosures) || []) {
+                    const m = String(line).match(
+                        /ships from ([A-Z]{2}),\s*([A-Z]{2})\s+Customs/);
+                    if (m) pair = {seller: m[1], buyer: m[2]};
+                }
+            }
+        }
+        return {ok: true, listings, shipsFrom, buyerCountry, pair};
+    }
+"""
+
+# Only needed to tell YOUR country code apart from the country NAME Whatnot
+# writes into shippingDetails. A code that is missing here reads as unknown,
+# never as foreign — see read_seller_origin().
+COUNTRY_NAMES = {
+    "NL": "netherlands", "BE": "belgium", "DE": "germany", "FR": "france",
+    "GB": "united kingdom", "UK": "united kingdom", "IE": "ireland",
+    "ES": "spain", "PT": "portugal", "IT": "italy", "AT": "austria",
+    "CH": "switzerland", "LU": "luxembourg", "PL": "poland", "CZ": "czechia",
+    "DK": "denmark", "SE": "sweden", "NO": "norway", "FI": "finland",
+    "US": "united states", "CA": "canada", "AU": "australia",
+    "NZ": "new zealand", "JP": "japan",
+}
+
+
+def origin_from_cache(result: dict, previous: dict | None = None) -> dict:
+    """Turn one SELLER_ORIGIN_JS reading into {ships_from, buyer_country,
+    foreign}, where `foreign` stays None until it is genuinely known.
+
+    Deliberately asymmetric. Every uncertainty — no listings cached yet, a
+    country name we cannot match against your own code — leaves `foreign`
+    None, and None means "announce it anyway". Being unsure costs a spare
+    buzz; being wrong the other way costs a giveaway.
+    """
+    origin = {
+        "ships_from": str(result.get("shipsFrom") or ""),
+        "buyer_country": str(result.get("buyerCountry") or ""),
+        "listings": int(result.get("listings") or 0),
+        "foreign": None,
+    }
+    if previous:
+        # The buyer address is not always in a fresh tab's cache; the seller's
+        # country is. Neither can change mid-stream, so never lose one.
+        origin["ships_from"] = origin["ships_from"] or previous.get("ships_from", "")
+        origin["buyer_country"] = (origin["buyer_country"]
+                                   or previous.get("buyer_country", ""))
+    pair = result.get("pair")
+    if isinstance(pair, dict) and pair.get("seller") and pair.get("buyer"):
+        origin["foreign"] = pair["seller"] != pair["buyer"]
+        origin["ships_from"] = origin["ships_from"] or f"ships from {pair['seller']}"
+    elif origin["ships_from"]:
+        home = COUNTRY_NAMES.get(origin["buyer_country"].upper())
+        if home:
+            origin["foreign"] = home not in origin["ships_from"].lower()
+    elif origin["listings"]:
+        # Listings are cached for this stream and not one of them carries a
+        # "Ships from" line, which Whatnot omits only when the seller is in
+        # your own country.
+        origin["foreign"] = False
+    return origin
+
+
+def read_seller_origin(page, origin_state: dict, url: str) -> dict:
+    """Where this stream's seller ships from, learned once per tab.
+
+    Kept as soon as it is known: a seller cannot move country mid-show, and
+    re-reading the cache every poll would spend an evaluate per tab on an
+    answer that cannot change. Any failure returns whatever was already
+    known (possibly nothing), never raises — this is a filter on alerts, and
+    it must never be the reason one does not arrive.
+    """
+    previous = origin_state.get(url)
+    if previous and previous.get("foreign") is not None:
+        return previous
+    try:
+        result = page.evaluate(SELLER_ORIGIN_JS)
+    except Exception:
+        return previous or {}
+    if not isinstance(result, dict) or not result.get("ok"):
+        return previous or {}
+    origin = origin_from_cache(result, previous)
+    if origin["foreign"] is not None and (not previous
+                                          or previous.get("foreign") is None):
+        where = origin["ships_from"] or "your own country"
+        log(f"seller origin — {where}"
+            f"{' (foreign)' if origin['foreign'] else ' (domestic)'} — {url}")
+    origin_state[url] = origin
+    return origin
+
+
+# A complete entrant list. The predecessor project measured that
+# giveawayEntries truncates at 50 names regardless of the real pool, so only
+# at or below this can absence from the list mean you were left out rather
+# than merely not among the first 50 shown.
+COMPLETE_POOL_MAX = 50
+
+
+def record_draw_for_shadowban(state: dict, reading: dict, ws_winner: dict,
+                              my_username: str) -> str | None:
+    """Log whether an eligible, enterable, small-enough draw included you.
+
+    Read-only bookkeeping: it never buzzes, it only counts. A draw is tallied
+    only when all of these hold, so the ratio it builds is honest:
+
+      * you were eligible (Whatnot's own verdict was True) — otherwise not
+        being drawn is expected, not evidence of anything;
+      * you could actually enter it — a domestic-only giveaway from a seller
+        abroad is one you are barred from, so it is EXCLUDED, never counted
+        as a miss (foreign_domestic() non-empty);
+      * the entrant list was complete (entryCount <= 50) — above that the
+        list is truncated and your absence proves nothing;
+      * the list parsed at all (not None).
+
+    Returns a short reason string when it skips, for the log; None when it
+    actually recorded one. The counts live in state so they survive restarts.
+    """
+    if not my_username or not ws_winner:
+        return None
+    if not ws_winner.get("was_eligible"):
+        return None
+    if foreign_domestic(reading):
+        # Barred from entering — excluded by design, exactly as asked.
+        return "foreign domestic-only, not counted"
+    count = ws_winner.get("entry_count")
+    if not isinstance(count, int) or count > COMPLETE_POOL_MAX:
+        return "pool too big to trust the list"
+    entrants = ws_winner.get("entrants")
+    if entrants is None:
+        return "no entrant list on the frame"
+
+    was_in = my_username in entrants
+    stats = state.setdefault("shadowban_stats", {"eligible_draws": 0,
+                                                 "listed": 0, "missing": 0})
+    stats["eligible_draws"] += 1
+    stats["listed" if was_in else "missing"] += 1
+    prize = ws_winner.get("prize") or "giveaway"
+    if was_in:
+        log(f"draw tally: IN the pool ({count} entrants) — {prize}")
+    else:
+        log(f"draw tally: NOT in a complete pool of {count} — {prize} "
+            f"[eligible {stats['eligible_draws']}, missing {stats['missing']}]")
+    return None
+
+
+def foreign_domestic(reading: dict) -> str:
+    """"Ships from Germany"-ish, when this giveaway is domestic-only AND the
+    seller is abroad — i.e. the case you cannot enter. Empty string whenever
+    either half is unknown or does not apply."""
+    ws_giveaway = reading.get("ws_giveaway") or {}
+    origin = reading.get("origin") or {}
+    if not ws_giveaway.get("onlyDomestic") or not origin.get("foreign"):
+        return ""
+    return origin.get("ships_from") or "a foreign seller"
+
+
 def cmd_watch(cfg: dict, sel: dict) -> None:
     if not chrome.ensure_running(cfg):
         sys.exit("Could not get a browser up. Nothing was changed.")
@@ -739,17 +1031,27 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     state.setdefault("seen_purchases", {})
     # url -> {prize, at}. Lets a win be traced back to its stream.
     state.setdefault("recent_giveaways", {})
+    # {eligible_draws, listed, missing} — the running shadowban ratio, over
+    # draws you were eligible for, could enter, and whose pool was small
+    # enough to trust. See record_draw_for_shadowban().
+    state.setdefault("shadowban_stats",
+                     {"eligible_draws": 0, "listed": 0, "missing": 0})
     poll = max(1, int(cfg.get("poll_seconds", 2)))
     confirm = max(1, int(cfg.get("confirm_polls", 2)))
     silence_after = max(0, int(cfg.get("silence_warning_minutes", 45))) * 60
     watch_purchases = bool(cfg.get("watch_purchases", True))
+    # "shadow" (default), "mute" or "off" — see announce_giveaway().
+    foreign_domestic_mode = str(
+        cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
     purchases_poll_seconds = max(15, int(cfg.get("purchases_poll_seconds", 60)))
 
     pw, browser = attach(int(cfg.get("debug_port", 9222)))
     trackers, challenged, warned_tabs = {}, set(), set()
+    challenge_wording = set()  # tabs where the wording appeared but the page was fine
     expanded = set()          # tabs whose banner we have already asked to open
     won_here = set()          # tabs whose draw overlay we have already alerted on
     ws_state = {}             # url -> learned giveaway info from socket frames
+    origin_state = {}         # url -> where that stream's seller ships from
     purchases_last_call = {"t": 0.0}   # throttle for the purchases refetch()
     my_username = str(cfg.get("my_username", "")).strip().lstrip("@").lower()
     if not my_username:
@@ -795,12 +1097,14 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 live_urls.add(url)
                 attach_giveaway_socket(page, ws_state)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
-                                          info.get("seller", ""))
+                                          info.get("seller", ""),
+                                          bool(info.get("challengeDom")))
+                reading["origin"] = read_seller_origin(page, origin_state, url)
                 ws_info = current_giveaway_info(ws_state, url)
                 if ws_info:
                     reading["ws_giveaway"] = ws_info
                     if not reading.get("prize"):
-                        reading["prize"] = ws_info["name"]
+                        reading["prize"] = ws_info.get("name") or ""
                     # Personal eligibility, straight from OUR account's own
                     # giveaway_entered frame — the one thing that otherwise
                     # required expand_giveaway (a click) to ever see.
@@ -825,6 +1129,10 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                             pass
                     continue
                 challenged.discard(url)
+                if reading.get("challenge_phrase") and url not in challenge_wording:
+                    challenge_wording.add(url)
+                    log(f"challenge wording on a healthy page (chat, most "
+                        f"likely) — not alerting — {url}")
 
                 if reading["present"]:
                     last_match = time.monotonic()
@@ -848,6 +1156,29 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 if not reading["present"] and not reading.get("winner"):
                     won_here.discard(url)
 
+                # Confirmation-only, on purpose — the predecessor project
+                # (whatnot-monitor) measured that the giveawayEntries NAME
+                # list truncates at 50 regardless of the real pool size
+                # (entryCount=105 seen alongside a 50-name list), so seeing
+                # your name proves you entered but NOT seeing it proves
+                # nothing. It never alarmed on absence for exactly that
+                # reason — only ever logged the positive case. Same here:
+                # log-only (never notifier.send, this is not for Bark),
+                # silent unless we actually saw the name.
+                if (ws_winner and ws_winner.get("was_eligible")
+                        and won_username != my_username
+                        and ws_winner.get("entrants") is not None
+                        and my_username in ws_winner["entrants"]):
+                    log(f"confirmed in the draw ({len(ws_winner['entrants'])} "
+                        f"entries) — {ws_winner.get('prize') or 'giveaway'} — {url}")
+
+                # Same drawn giveaway, counted for the shadowban ratio. Runs
+                # only when you won nothing yourself (a win is not a miss),
+                # and skips anything you were barred from — see the function.
+                if won_username != my_username:
+                    record_draw_for_shadowban(state, reading, ws_winner,
+                                              my_username)
+
                 # Opt-in, once per giveaway: if it is folded shut there is
                 # nothing to read, so ask for it to be opened and pick the
                 # detail up on the next poll.
@@ -865,12 +1196,15 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 event = tracker.update(reading, signature(url, reading))
                 if event == "started":
                     announce_giveaway(notifier, url, reading,
-                                      state["recent_giveaways"])
+                                      state["recent_giveaways"],
+                                      foreign_domestic_mode)
                 elif event == "ended":
                     log(f"giveaway ended — {url}")
 
             for gone in set(trackers) - live_urls:
                 trackers.pop(gone, None)
+            for gone in set(origin_state) - live_urls:
+                origin_state.pop(gone, None)
             for gone in set(ws_state) - live_urls:
                 ws_state.pop(gone, None)
 
@@ -948,7 +1282,8 @@ def describe_giveaway_type(ws_giveaway: dict | None) -> str:
 
 
 def announce_giveaway(notifier, url: str, reading: dict,
-                      remember: dict | None = None) -> None:
+                      remember: dict | None = None,
+                      foreign_domestic_mode: str = "shadow") -> None:
     """Push in the shape the old radar used, which reads well on a lock screen:
     who it is on the title line, what it is underneath, then what to do.
 
@@ -959,6 +1294,7 @@ def announce_giveaway(notifier, url: str, reading: dict,
     prize = reading.get("prize") or ""
     eligible = reading.get("eligible")
     type_label = describe_giveaway_type(reading.get("ws_giveaway"))
+    abroad = foreign_domestic(reading)
 
     # Silence only what the page has explicitly said you cannot enter.
     # Unknown is announced: a missed giveaway costs an entry, a spare buzz
@@ -966,6 +1302,24 @@ def announce_giveaway(notifier, url: str, reading: dict,
     if eligible is False:
         log(f"not eligible, staying quiet — {prize or 'giveaway'} — {url}")
         return
+
+    # Domestic-only from a seller abroad: Whatnot restricts entry to the
+    # seller's own country, so this one cannot be entered at all. Unlike
+    # `eligible`, which is Whatnot's own verdict on your account, this is
+    # inferred from two readings — so it starts in "shadow": it says what it
+    # WOULD have silenced and then sends anyway, and only becomes real once
+    # the log shows it was right. "off" turns it off entirely.
+    if abroad:
+        if foreign_domestic_mode == "mute":
+            log(f"domestic-only from abroad ({abroad}), staying quiet — "
+                f"{prize or 'giveaway'} — {url}")
+            return
+        if foreign_domestic_mode != "off":
+            log(f"WOULD HAVE STAYED QUIET — domestic-only, {abroad} — "
+                f"{prize or 'giveaway'} — {url}")
+            # Put it in the push too, so the call can be judged from the
+            # phone rather than only from the log.
+            type_label = f"{type_label} · {abroad}" if type_label else abroad
 
     title = f"🎁 Giveaway — {seller} 🎁" if seller else "🎁 Giveaway 🎁"
     body = prize or "A giveaway just started."

@@ -80,6 +80,39 @@ class ReadingAPage(unittest.TestCase):
         self.assertIsNone(r["entries"])
 
 
+class TellingARealChallengeApartFromChat(unittest.TestCase):
+    """A live tab alerted as challenged on 2026-08-18 with no challenge on it.
+    Chat is English prose, "just a moment" is ordinary English, and the wording
+    was matched against the whole page. A real interstitial replaces the page:
+    Cloudflare's own markup, and a couple of hundred characters at most."""
+
+    STREAM = ("magictraders_nl is live\n" + "chat line\n" * 400 +
+              "someone typed just a moment\n" + "chat line\n" * 400)
+
+    def read(self, text, challenge_dom=False):
+        return watch.read_live_tab(text, SELECTORS, "", "", challenge_dom)
+
+    def test_the_wording_in_a_full_page_is_not_a_challenge(self):
+        self.assertFalse(self.read(self.STREAM)["challenge"])
+
+    def test_but_it_is_still_reported_as_wording_seen(self):
+        self.assertTrue(self.read(self.STREAM)["challenge_phrase"])
+
+    def test_cloudflare_markup_is_believed_however_long_the_page(self):
+        self.assertTrue(self.read(self.STREAM, challenge_dom=True)["challenge"])
+
+    def test_the_real_interstitial_is_still_caught(self):
+        self.assertTrue(self.read(
+            "Just a moment...\nChecking your browser before accessing "
+            "whatnot.com\nEnable JavaScript and cookies to continue")["challenge"])
+
+    def test_a_healthy_page_reports_no_wording_at_all(self):
+        self.assertFalse(self.read("Giveaway with 12 entries")["challenge_phrase"])
+
+    def test_a_challenged_tab_is_still_read_as_no_giveaway(self):
+        self.assertFalse(self.read("Just a moment...")["present"])
+
+
 class TheRealBanner(unittest.TestCase):
     """Transcribed from screenshots of the live site, 2026-08-12. These are the
     only fixtures here that are known real rather than invented."""
@@ -332,6 +365,219 @@ class NotificationShape(unittest.TestCase):
         self.assertEqual(
             self.announce({"present": True, "seller": "s", "prize": "tb 3",
                            "eligible": False}), [])
+
+
+class WhereTheSellerShipsFrom(unittest.TestCase):
+    """Reading a seller's country out of one Apollo-cache snapshot.
+
+    Measured live 2026-08-18: a foreign seller's listings say "Ships from
+    United Kingdom" / "Ships from Germany", a seller in your own country says
+    nothing at all, and the tariff line — when customs apply — names both
+    countries as ISO codes.
+    """
+
+    def test_a_foreign_seller_is_read_from_the_shipping_line(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 30, "shipsFrom": "Ships from Germany",
+             "buyerCountry": "NL", "pair": None})
+        self.assertTrue(origin["foreign"])
+
+    def test_the_euro_does_not_hide_a_german_seller(self):
+        # The whole reason currency cannot be used: DE and NL share it.
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 44, "shipsFrom": "Ships from Germany",
+             "buyerCountry": "NL", "pair": None})
+        self.assertTrue(origin["foreign"])
+
+    def test_no_shipping_line_at_all_means_your_own_country(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 34, "shipsFrom": "", "buyerCountry": "NL",
+             "pair": None})
+        self.assertFalse(origin["foreign"])
+
+    def test_an_empty_cache_stays_unknown(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 0, "shipsFrom": "", "buyerCountry": "NL",
+             "pair": None})
+        self.assertIsNone(origin["foreign"])
+
+    def test_the_tariff_line_is_believed_over_country_names(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 4, "shipsFrom": "Ships from United Kingdom",
+             "buyerCountry": "NL", "pair": {"seller": "GB", "buyer": "NL"}})
+        self.assertTrue(origin["foreign"])
+
+    def test_a_country_we_cannot_name_is_unknown_not_foreign(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 4, "shipsFrom": "Ships from Ruritania",
+             "buyerCountry": "ZZ", "pair": None})
+        self.assertIsNone(origin["foreign"])
+
+    def test_your_own_country_named_outright_is_not_foreign(self):
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 4, "shipsFrom": "Ships from Netherlands",
+             "buyerCountry": "NL", "pair": None})
+        self.assertFalse(origin["foreign"])
+
+    def test_what_was_learned_earlier_is_not_lost(self):
+        previous = {"ships_from": "Ships from United Kingdom",
+                    "buyer_country": "NL", "listings": 4, "foreign": None}
+        origin = watch.origin_from_cache(
+            {"ok": True, "listings": 0, "shipsFrom": "", "buyerCountry": "",
+             "pair": None}, previous)
+        self.assertTrue(origin["foreign"])
+
+
+class DomesticOnlyFromAbroad(unittest.TestCase):
+    """The one case that cannot be entered: domestic-only, seller abroad.
+
+    Both halves must be known. Anything unknown announces — a spare buzz
+    costs nothing, a missed giveaway costs the entry.
+    """
+
+    def reading(self, only_domestic, foreign):
+        return {"present": True, "seller": "s", "prize": "Free box",
+                "eligible": None,
+                "ws_giveaway": {"onlyDomestic": only_domestic},
+                "origin": {"ships_from": "Ships from United Kingdom",
+                           "foreign": foreign}}
+
+    def test_domestic_only_and_abroad_is_the_case(self):
+        self.assertTrue(watch.foreign_domestic(self.reading(True, True)))
+
+    def test_an_international_giveaway_from_abroad_is_fine(self):
+        self.assertFalse(watch.foreign_domestic(self.reading(False, True)))
+
+    def test_domestic_only_at_home_is_fine(self):
+        self.assertFalse(watch.foreign_domestic(self.reading(True, False)))
+
+    def test_an_unknown_country_is_not_the_case(self):
+        self.assertFalse(watch.foreign_domestic(self.reading(True, None)))
+
+    def test_no_socket_reading_yet_is_not_the_case(self):
+        self.assertFalse(watch.foreign_domestic(
+            {"present": True, "origin": {"foreign": True}}))
+
+
+class ShadowingTheForeignDomesticFilter(unittest.TestCase):
+    """Shadow mode must change nothing about what is sent — it only says what
+    it would have silenced. Muting is a separate, opt-in setting."""
+
+    class Spy:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, title, message, url, **kw):
+            self.sent.append({"title": title, "message": message, "url": url})
+
+    def announce(self, mode):
+        reading = {"present": True, "seller": "pokeretreat",
+                   "prize": "Free Triple Blister", "eligible": None,
+                   "ws_giveaway": {"onlyDomestic": True, "onlyFollowers": True},
+                   "origin": {"ships_from": "Ships from United Kingdom",
+                              "foreign": True}}
+        spy = self.Spy()
+        watch.announce_giveaway(spy, "https://wn/live/x", reading, {}, mode)
+        return spy.sent
+
+    def test_shadow_still_sends(self):
+        self.assertEqual(len(self.announce("shadow")), 1)
+
+    def test_shadow_names_the_country_in_the_push(self):
+        self.assertIn("United Kingdom", self.announce("shadow")[0]["message"])
+
+    def test_mute_sends_nothing(self):
+        self.assertEqual(self.announce("mute"), [])
+
+    def test_off_sends_and_says_nothing_extra(self):
+        sent = self.announce("off")
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn("United Kingdom", sent[0]["message"])
+
+    def test_an_enterable_giveaway_is_untouched_in_every_mode(self):
+        for mode in ("shadow", "mute", "off"):
+            spy = self.Spy()
+            watch.announce_giveaway(
+                spy, "https://wn/live/x",
+                {"present": True, "seller": "magictraders_nl", "prize": "Box",
+                 "eligible": None, "ws_giveaway": {"onlyDomestic": True},
+                 "origin": {"ships_from": "", "foreign": False}}, {}, mode)
+            with self.subTest(mode=mode):
+                self.assertEqual(len(spy.sent), 1)
+
+
+class TheShadowbanTally(unittest.TestCase):
+    """Counts only draws that are actually evidence: you were eligible, you
+    could enter, and the pool was small enough that the entrant list is
+    complete. Foreign domestic-only giveaways — the ones you are barred from
+    — must never count as a miss."""
+
+    def fresh(self):
+        return {"shadowban_stats": {"eligible_draws": 0, "listed": 0,
+                                    "missing": 0}}
+
+    def reading(self, only_domestic=False, foreign=False):
+        return {"ws_giveaway": {"onlyDomestic": only_domestic},
+                "origin": {"ships_from": "Ships from United Kingdom",
+                           "foreign": foreign}}
+
+    def winner(self, entrants, eligible=True, count=20):
+        return {"username": "someoneelse", "prize": "Box",
+                "entrants": entrants, "was_eligible": eligible,
+                "entry_count": count}
+
+    def test_present_in_a_small_pool_is_a_listed_draw(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(st, self.reading(),
+                                        self.winner({"me", "bob"}), "me")
+        self.assertEqual(st["shadowban_stats"],
+                         {"eligible_draws": 1, "listed": 1, "missing": 0})
+
+    def test_absent_from_a_small_pool_is_a_miss(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(st, self.reading(),
+                                        self.winner({"bob", "ann"}), "me")
+        self.assertEqual(st["shadowban_stats"],
+                         {"eligible_draws": 1, "listed": 0, "missing": 1})
+
+    def test_a_foreign_domestic_giveaway_is_never_counted(self):
+        st = self.fresh()
+        reason = watch.record_draw_for_shadowban(
+            st, self.reading(only_domestic=True, foreign=True),
+            self.winner({"bob"}), "me")
+        self.assertIn("not counted", reason)
+        self.assertEqual(st["shadowban_stats"]["eligible_draws"], 0)
+
+    def test_a_pool_over_fifty_is_not_trusted(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(
+            st, self.reading(), self.winner({"bob"}, count=105), "me")
+        self.assertEqual(st["shadowban_stats"]["eligible_draws"], 0)
+
+    def test_an_ineligible_draw_is_not_counted(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(
+            st, self.reading(), self.winner({"bob"}, eligible=False), "me")
+        self.assertEqual(st["shadowban_stats"]["eligible_draws"], 0)
+
+    def test_a_missing_entrant_list_is_not_counted(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(
+            st, self.reading(), self.winner(None), "me")
+        self.assertEqual(st["shadowban_stats"]["eligible_draws"], 0)
+
+    def test_an_unknown_pool_size_is_not_counted(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(
+            st, self.reading(), self.winner({"bob"}, count=None), "me")
+        self.assertEqual(st["shadowban_stats"]["eligible_draws"], 0)
+
+    def test_a_domestic_giveaway_from_a_home_seller_still_counts(self):
+        st = self.fresh()
+        watch.record_draw_for_shadowban(
+            st, self.reading(only_domestic=True, foreign=False),
+            self.winner({"me"}), "me")
+        self.assertEqual(st["shadowban_stats"]["listed"], 1)
 
 
 class Signature(unittest.TestCase):

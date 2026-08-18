@@ -8,3 +8,4 @@ watcher.log
 .watcher.pid
 probe-react.json
 tabs.json
+debug-entrants.json
