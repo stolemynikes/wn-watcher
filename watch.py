@@ -715,9 +715,10 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
     # by pop_ws_winner (main thread) — a plain dict key survives that under
     # the GIL without a lock, same as active_id/products already do below.
     entry = {"products": {}, "active_id": None, "winner": None,
-             "counts": {}, "cdp": cdp}
+             "counts": {}, "cdp": cdp, "last_frame": time.time()}
 
     def on_frame(params):
+        entry["last_frame"] = time.time()
         payload = params.get("response", {}).get("payloadData", "")
         try:
             arr = json.loads(payload)
@@ -776,9 +777,20 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
                     "entry_count": entry["counts"].get(pid),
                 }
                 try:
+                    # entry_count next to the raw list settles, on real
+                    # draws, whether giveawayEntries is truncated by Whatnot
+                    # or carries the whole pool: a count above the list length
+                    # is proof of truncation, a count equal to it is not. The
+                    # COMPLETE_POOL_MAX gate rests on this, so keep the raw
+                    # evidence to check it against.
+                    raw_entries = data.get("giveawayEntries")
                     DEBUG_ENTRANTS_PATH.write_text(json.dumps(
                         {"at": time.time(), "url": url, "pid": pid,
-                         "winner": username, "raw_entries": data.get("giveawayEntries")},
+                         "winner": username,
+                         "entry_count": entry["counts"].get(pid),
+                         "list_length": (len(raw_entries)
+                                         if isinstance(raw_entries, list) else None),
+                         "raw_entries": raw_entries},
                         indent=2, ensure_ascii=False), encoding="utf-8")
                 except Exception:
                     pass
@@ -815,6 +827,43 @@ def pop_ws_winner(ws_state: dict, url: str) -> dict | None:
         return None
     winner, entry["winner"] = entry["winner"], None
     return winner
+
+
+def check_presence(notifier, url: str, ws_state: dict, presence_lost: set,
+                   stale_after: int) -> None:
+    """Warn — once — when a tab has gone silent long enough that its socket has
+    almost certainly dropped, which means you have quietly fallen out of the
+    stream and its giveaways.
+
+    Read-only: it never touches the tab, only tells you to reload it yourself.
+    The alert clears when frames resume, so a tab that reconnects on its own
+    (which the keep-alive flags usually let it) can warn again if it drops a
+    second time. A freshly attached tab starts with last_frame = now, so it is
+    given a full window before it can be judged silent.
+    """
+    if not stale_after:
+        return
+    entry = ws_state.get(url)
+    if not entry:
+        return
+    silent = time.time() - entry["last_frame"]
+    if silent < stale_after:
+        # Frames are flowing again — re-arm so a later drop warns afresh.
+        presence_lost.discard(url)
+        return
+    if url in presence_lost:
+        return
+    presence_lost.add(url)
+    log(f"presence may have dropped — no socket frames for {int(silent)}s "
+        f"— {url}")
+    try:
+        notifier.send(
+            "⚠️ Fell out of a stream? ⚠️",
+            "A stream tab went quiet — its connection likely dropped, so you "
+            "may no longer count as a viewer there. Reload that tab to rejoin.",
+            url, priority="high", group="alerts")
+    except Exception as exc:
+        log(f"presence alert failed ({exc.__class__.__name__})")
 
 
 # --- where the seller ships from -------------------------------------------
@@ -1040,6 +1089,10 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     confirm = max(1, int(cfg.get("confirm_polls", 2)))
     silence_after = max(0, int(cfg.get("silence_warning_minutes", 45))) * 60
     watch_purchases = bool(cfg.get("watch_purchases", True))
+    # A live stream sends view-count/reaction frames every few seconds, so a
+    # tab silent this long has almost certainly lost its socket — meaning you
+    # have silently fallen out of that stream and its giveaways. 0 disables.
+    presence_stale_seconds = max(0, int(cfg.get("presence_stale_seconds", 90)))
     # "shadow" (default), "mute" or "off" — see announce_giveaway().
     foreign_domestic_mode = str(
         cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
@@ -1052,6 +1105,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     won_here = set()          # tabs whose draw overlay we have already alerted on
     ws_state = {}             # url -> learned giveaway info from socket frames
     origin_state = {}         # url -> where that stream's seller ships from
+    presence_lost = set()     # tabs already alerted as gone quiet
     purchases_last_call = {"t": 0.0}   # throttle for the purchases refetch()
     my_username = str(cfg.get("my_username", "")).strip().lstrip("@").lower()
     if not my_username:
@@ -1096,6 +1150,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
                 live_urls.add(url)
                 attach_giveaway_socket(page, ws_state)
+                check_presence(notifier, url, ws_state, presence_lost,
+                               presence_stale_seconds)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
                                           info.get("seller", ""),
                                           bool(info.get("challengeDom")))
@@ -1206,7 +1262,13 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             for gone in set(origin_state) - live_urls:
                 origin_state.pop(gone, None)
             for gone in set(ws_state) - live_urls:
-                ws_state.pop(gone, None)
+                stale = ws_state.pop(gone, None)
+                if stale:
+                    try:
+                        stale["cdp"].detach()
+                    except Exception:
+                        pass
+                presence_lost.discard(gone)
 
             if not pages and not warned_no_tabs:
                 warned_no_tabs = True

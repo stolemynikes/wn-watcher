@@ -17,6 +17,8 @@
   "silence_warning_minutes": 45,
   "_comment_foreign_domestic": "How to treat a domestic-only giveaway from a seller in another country — one you cannot enter at all. \"shadow\" (default) changes nothing: it logs WOULD HAVE STAYED QUIET and adds the seller's country to the push, so the call can be checked before it is trusted. \"mute\" actually silences those. \"off\" ignores the whole thing. The seller's country is read from the page's own Apollo cache (ListingNode.shippingDetails, absent only when the seller is in your country); the domestic-only flag comes from the socket. Anything unknown is announced.",
   "foreign_domestic_giveaways": "shadow",
+  "_comment_presence": "A live stream sends view-count and reaction frames every few seconds, so a tab that has been silent this many seconds has almost certainly lost its socket \u2014 meaning you have quietly fallen out of that stream and stopped counting as a viewer for its giveaways. When that happens the watcher pushes you to reload the tab; it never reloads it itself. Set 0 to disable.",
+  "presence_stale_seconds": 90,
   "watch_purchases": true,
   "_comment_purchases_poll": "How often (seconds) the purchases tab's own Apollo query is asked to refetch itself. Added 2026-08-13: that page never refreshes on its own — confirmed by hand — so a real win could sit unseen forever otherwise. This is one real network request, the same one a manual reload makes, so it is throttled well below anything pattern-like; 60s reads as an ordinary glance back at an open tab, not a bot.",
   "purchases_poll_seconds": 60

@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -578,6 +579,60 @@ class TheShadowbanTally(unittest.TestCase):
             st, self.reading(only_domestic=True, foreign=False),
             self.winner({"me"}), "me")
         self.assertEqual(st["shadowban_stats"]["listed"], 1)
+
+
+class PresenceDropAlert(unittest.TestCase):
+    """A tab whose socket has gone silent means you have fallen out of the
+    stream. Warn once, clear when it recovers, never touch the tab."""
+
+    class Spy:
+        def __init__(self): self.sent=[]
+        def send(self, title, message, url, **kw):
+            self.sent.append({"title": title, "message": message})
+
+    def state(self, seconds_ago):
+        return {"u": {"last_frame": time.time() - seconds_ago, "cdp": None}}
+
+    def test_a_silent_tab_warns(self):
+        spy=self.Spy(); lost=set()
+        watch.check_presence(spy, "u", self.state(120), lost, 90)
+        self.assertEqual(len(spy.sent), 1)
+        self.assertIn("u", lost)
+
+    def test_a_lively_tab_does_not_warn(self):
+        spy=self.Spy(); lost=set()
+        watch.check_presence(spy, "u", self.state(5), lost, 90)
+        self.assertEqual(spy.sent, [])
+
+    def test_it_warns_only_once_while_still_silent(self):
+        spy=self.Spy(); lost=set()
+        st=self.state(200)
+        watch.check_presence(spy, "u", st, lost, 90)
+        watch.check_presence(spy, "u", st, lost, 90)
+        self.assertEqual(len(spy.sent), 1)
+
+    def test_recovery_re_arms_the_warning(self):
+        spy=self.Spy(); lost=set()
+        watch.check_presence(spy, "u", self.state(200), lost, 90)  # warns
+        watch.check_presence(spy, "u", self.state(2), lost, 90)    # recovers
+        self.assertNotIn("u", lost)
+        watch.check_presence(spy, "u", self.state(200), lost, 90)  # warns again
+        self.assertEqual(len(spy.sent), 2)
+
+    def test_zero_threshold_disables_it(self):
+        spy=self.Spy(); lost=set()
+        watch.check_presence(spy, "u", self.state(9999), lost, 0)
+        self.assertEqual(spy.sent, [])
+
+    def test_a_freshly_attached_tab_is_not_judged_silent(self):
+        spy=self.Spy(); lost=set()
+        watch.check_presence(spy, "u", self.state(0), lost, 90)
+        self.assertEqual(spy.sent, [])
+
+    def test_an_unknown_tab_is_a_no_op(self):
+        spy=self.Spy()
+        watch.check_presence(spy, "gone", {}, set(), 90)
+        self.assertEqual(spy.sent, [])
 
 
 class Signature(unittest.TestCase):
