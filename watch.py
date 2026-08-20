@@ -668,6 +668,11 @@ def cmd_test(cfg: dict) -> None:
 _GIVEAWAY_TYPE_EVENTS = ("product_updated", "product_pinned", "auction_started",
                         "giveaway_started")
 
+# Seconds after a socket attaches during which presence leaves/joins are
+# adopted silently, not reported: a fresh or reconnecting socket churns your
+# presence ref (old leaves, new joins) and that is not a real drop.
+PRESENCE_ATTACH_GRACE = 20
+
 
 def entrants_from(raw) -> set[str] | None:
     """Lowercase usernames out of a giveaway_won frame's entrant list.
@@ -742,7 +747,8 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
     # kept for the main thread to log and correlate with draws.
     entry = {"products": {}, "active_id": None, "winner": None,
              "counts": {}, "cdp": cdp, "last_frame": time.time(),
-             "present": None, "presence_events": []}
+             "present": None, "presence_events": [],
+             "attached_at": time.time()}
 
     def on_frame(params):
         entry["last_frame"] = time.time()
@@ -824,8 +830,21 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
         elif event == "presence_diff" and my_username:
             left = my_username in _presence_usernames(data.get("leaves"))
             joined = my_username in _presence_usernames(data.get("joins"))
+            # Ignore the first few seconds after attaching: a fresh socket
+            # (page load, our restart, a network reconnect) churns your
+            # presence ref — the old one leaves and a new one joins — which
+            # looks exactly like a drop but is not one. Measured 2026-08-20:
+            # a spurious "left" fired 27s after attach on a reconnect. Only
+            # leaves well clear of that churn window mean you really dropped.
+            if time.time() - entry["attached_at"] < PRESENCE_ATTACH_GRACE:
+                # Still adopt the state so a later real change is diffed
+                # against the truth, just do not report the churn itself.
+                if left and not joined:
+                    entry["present"] = False
+                elif joined and not left:
+                    entry["present"] = True
             # A diff can carry both; a rejoin in the same frame is a no-op.
-            if left and not joined and entry["present"] is not False:
+            elif left and not joined and entry["present"] is not False:
                 entry["present"] = False
                 entry["presence_events"].append(("left", time.time()))
             elif joined and not left and entry["present"] is not True:

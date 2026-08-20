@@ -684,6 +684,47 @@ class OwnPresenceInThePresenceFeed(unittest.TestCase):
         self.assertEqual(watch.pop_presence_events(ws,"u"),[])
 
 
+class PresenceGraceAfterAttach(unittest.TestCase):
+    """A leave inside the attach grace window is connection churn, not a real
+    drop, so it must be adopted silently — no event, no push."""
+
+    def feed(self, entry, leaves=(), joins=()):
+        # mimic the on_frame presence_diff branch against a built entry
+        import time as _t
+        left = "me" in set(n.lower() for n in leaves)
+        joined = "me" in set(n.lower() for n in joins)
+        if _t.time() - entry["attached_at"] < watch.PRESENCE_ATTACH_GRACE:
+            if left and not joined: entry["present"]=False
+            elif joined and not left: entry["present"]=True
+        elif left and not joined and entry["present"] is not False:
+            entry["present"]=False; entry["presence_events"].append(("left", _t.time()))
+        elif joined and not left and entry["present"] is not True:
+            entry["present"]=True; entry["presence_events"].append(("joined", _t.time()))
+
+    def fresh(self, attached_ago):
+        return {"present": None, "presence_events": [],
+                "attached_at": time.time() - attached_ago}
+
+    def test_a_leave_just_after_attach_is_silent(self):
+        e=self.fresh(2)   # 2s after attach, inside grace
+        self.feed(e, leaves=["me"])
+        self.assertEqual(e["presence_events"], [])
+        self.assertIs(e["present"], False)   # state still adopted
+
+    def test_a_leave_well_after_attach_is_reported(self):
+        e=self.fresh(120)  # long after attach
+        e["present"]=True
+        self.feed(e, leaves=["me"])
+        self.assertEqual(len(e["presence_events"]), 1)
+
+    def test_a_real_drop_then_rejoin_after_grace_logs_both(self):
+        e=self.fresh(120); e["present"]=True
+        self.feed(e, leaves=["me"])
+        self.feed(e, joins=["me"])
+        kinds=[k for k,_ in e["presence_events"]]
+        self.assertEqual(kinds, ["left","joined"])
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""
