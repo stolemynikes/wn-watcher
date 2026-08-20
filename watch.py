@@ -850,6 +850,23 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
             elif joined and not left and entry["present"] is not True:
                 entry["present"] = True
                 entry["presence_events"].append(("joined", time.time()))
+        elif event == "presence_state" and my_username:
+            # The FULL viewer list, resent whenever the socket (re)joins the
+            # channel — which is what a ~hourly auth rotation triggers. The
+            # rotation's rejoin arrives here, not as a join diff, so without
+            # reading this a rotation looks like a drop that never comes back.
+            # Seeing yourself in a fresh state after a "left" is the proof it
+            # was rotation, not a real drop; not seeing yourself confirms one.
+            here = my_username in _presence_usernames(data)
+            if here and entry["present"] is not True:
+                # Silent right after attach (that is just the initial sync);
+                # a real rejoin only matters once we had logged you gone.
+                if entry["present"] is False:
+                    entry["presence_events"].append(("rejoined", time.time()))
+                entry["present"] = True
+            elif not here and entry["present"] is True:
+                entry["present"] = False
+                entry["presence_events"].append(("left", time.time()))
         elif event == "giveaway_entered":
             gv = data.get("giveaway") or {}
             pid = gv.get("productId")
@@ -901,7 +918,7 @@ def pop_presence_events(ws_state: dict, url: str) -> list:
 
 
 def report_presence_events(notifier, url: str, events: list,
-                           ws_state: dict) -> None:
+                           ws_state: dict, giveaway_present: bool = False) -> None:
     """Log every own-account drop/rejoin, and push only on a drop that lands
     while a giveaway is live on this tab — the case that actually costs you an
     entry. Read-only: it explains what Whatnot's own presence feed reported,
@@ -912,7 +929,11 @@ def report_presence_events(notifier, url: str, events: list,
     cannot give.
     """
     entry = ws_state.get(url)
-    in_giveaway = bool(entry and entry.get("active_id"))
+    # Whether a giveaway is on screen RIGHT NOW, from this poll's own reading
+    # — not the socket's active_id, which is never cleared when a giveaway
+    # ends and so reads "in a giveaway" forever after the first one (the false
+    # "DURING A LIVE GIVEAWAY" pushes seen 2026-08-20).
+    in_giveaway = bool(giveaway_present)
     attached_at = entry.get("attached_at") if entry else None
     for kind, when in events:
         stamp = datetime.fromtimestamp(when).strftime("%H:%M:%S")
@@ -1260,9 +1281,6 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 attach_giveaway_socket(page, ws_state, my_username)
                 check_presence(notifier, url, ws_state, presence_lost,
                                presence_stale_seconds)
-                report_presence_events(
-                    notifier, url,
-                    pop_presence_events(ws_state, url), ws_state)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
                                           info.get("seller", ""),
                                           bool(info.get("challengeDom")))
@@ -1280,6 +1298,12 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
                 snapshot.append({"url": url, "title": info["title"],
                                  "kind": "live", "reading": reading})
+
+                # Now that this poll's giveaway reading is in hand, report any
+                # own-presence drop/rejoin against what is actually on screen.
+                report_presence_events(
+                    notifier, url, pop_presence_events(ws_state, url),
+                    ws_state, bool(reading.get("present")))
 
                 if reading["challenge"]:
                     if url not in challenged:

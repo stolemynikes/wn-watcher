@@ -662,20 +662,27 @@ class OwnPresenceInThePresenceFeed(unittest.TestCase):
 
     def test_a_drop_during_a_giveaway_pushes(self):
         spy=self.Spy()
-        ws={"u":{"active_id":"p1"}}
-        watch.report_presence_events(spy,"u",[("left",1000.0)],ws)
+        ws={"u":{"attached_at":0.0}}
+        watch.report_presence_events(spy,"u",[("left",1000.0)],ws,True)
         self.assertEqual(len(spy.sent),1)
 
     def test_a_drop_with_no_giveaway_only_logs(self):
         spy=self.Spy()
-        ws={"u":{"active_id":None}}
-        watch.report_presence_events(spy,"u",[("left",1000.0)],ws)
+        ws={"u":{"attached_at":0.0}}
+        watch.report_presence_events(spy,"u",[("left",1000.0)],ws,False)
+        self.assertEqual(spy.sent,[])
+
+    def test_a_stale_active_id_no_longer_forces_a_push(self):
+        # active_id is set but no giveaway is on screen now -> no push
+        spy=self.Spy()
+        ws={"u":{"attached_at":0.0,"active_id":"p1"}}
+        watch.report_presence_events(spy,"u",[("left",1000.0)],ws,False)
         self.assertEqual(spy.sent,[])
 
     def test_a_rejoin_never_pushes(self):
         spy=self.Spy()
-        ws={"u":{"active_id":"p1"}}
-        watch.report_presence_events(spy,"u",[("joined",1000.0)],ws)
+        ws={"u":{"attached_at":0.0}}
+        watch.report_presence_events(spy,"u",[("joined",1000.0)],ws,True)
         self.assertEqual(spy.sent,[])
 
     def test_events_are_consumed_once(self):
@@ -723,6 +730,40 @@ class PresenceGraceAfterAttach(unittest.TestCase):
         self.feed(e, joins=["me"])
         kinds=[k for k,_ in e["presence_events"]]
         self.assertEqual(kinds, ["left","joined"])
+
+
+class PresenceStateResync(unittest.TestCase):
+    """The full viewer list on (re)join. Seeing yourself in a fresh state
+    after a drop is the proof it was a rotation, not a real drop."""
+
+    def block(self, *names):
+        return {f"k{i}":{"metas":[{"user":{"username":n}}]} for i,n in enumerate(names)}
+
+    def test_reads_the_full_list(self):
+        got=watch._presence_usernames(self.block("me","bob","ann"))
+        self.assertEqual(got, {"me","bob","ann"})
+
+    def test_rotation_rejoin_is_seen_via_state(self):
+        # simulate: present True -> a "left" made it False -> presence_state
+        # with you in it -> a rejoined event
+        entry={"present":False,"presence_events":[]}
+        data=self.block("me","bob")
+        here="me" in watch._presence_usernames(data)
+        if here and entry["present"] is not True:
+            if entry["present"] is False:
+                entry["presence_events"].append(("rejoined",1.0))
+            entry["present"]=True
+        self.assertEqual([k for k,_ in entry["presence_events"]], ["rejoined"])
+        self.assertIs(entry["present"], True)
+
+    def test_a_state_without_you_confirms_a_drop(self):
+        entry={"present":True,"presence_events":[]}
+        data=self.block("bob","ann")
+        here="me" in watch._presence_usernames(data)
+        if not here and entry["present"] is True:
+            entry["present"]=False
+            entry["presence_events"].append(("left",1.0))
+        self.assertEqual([k for k,_ in entry["presence_events"]], ["left"])
 
 
 class Signature(unittest.TestCase):
