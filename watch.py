@@ -458,6 +458,31 @@ def attach(port: int):
     return pw, browser
 
 
+def chrome_has_live_tabs(port: int) -> bool:
+    """Ask Chrome directly, over its debug HTTP endpoint, whether it has any
+    Whatnot tab open — bypassing Playwright entirely.
+
+    Used to tell two very different empty results apart: Playwright seeing no
+    pages because there genuinely are none, versus its connection having gone
+    stale while Chrome still has tabs (measured 2026-08-20: closing every tab
+    at once and opening new ones left the watcher blind, reporting no tabs
+    while Chrome had several). Best-effort: any failure returns False, which
+    just means "do not attempt a reconnect this poll".
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json", timeout=2) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return False
+    for target in data if isinstance(data, list) else []:
+        if (target.get("type") == "page"
+                and "whatnot.com" in (target.get("url") or "")):
+            return True
+    return False
+
+
 def whatnot_pages(browser):
     """Every tab currently on Whatnot. Recomputed each poll, so tabs you open
     or close during a run are picked up without restarting.
@@ -1227,8 +1252,10 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
         cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
     purchases_poll_seconds = max(15, int(cfg.get("purchases_poll_seconds", 60)))
 
-    pw, browser = attach(int(cfg.get("debug_port", 9222)))
+    debug_port = int(cfg.get("debug_port", 9222))
+    pw, browser = attach(debug_port)
     trackers, challenged, warned_tabs = {}, set(), set()
+    last_reconnect = 0.0   # throttle: at most one stale-connection reconnect / 15s
     challenge_wording = set()  # tabs where the wording appeared but the page was fine
     expanded = set()          # tabs whose banner we have already asked to open
     won_here = set()          # tabs whose draw overlay we have already alerted on
@@ -1255,6 +1282,38 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             if pages is None:
                 log("the browser was closed — stopping.")
                 break
+            # Playwright sees nothing but Chrome still has tabs = the CDP
+            # connection went stale. Reconnect instead of sitting blind, which
+            # is what left giveaways unwatched and produced false presence
+            # drops on the next reattach. Throttled, and only when Chrome
+            # really does have tabs, so a genuinely empty browser just waits.
+            if (not pages and time.monotonic() - last_reconnect > 15
+                    and chrome_has_live_tabs(debug_port)):
+                last_reconnect = time.monotonic()
+                log("connection went stale (Chrome has tabs, we saw none) — "
+                    "reconnecting")
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                try:
+                    pw.stop()
+                except Exception:
+                    pass
+                try:
+                    pw, browser = attach(debug_port)
+                except SystemExit:
+                    # Chrome became unreachable between the HTTP check and the
+                    # reconnect — rare. Nothing valid to poll now, so wait and
+                    # let the next iteration find it; the loop's own None-check
+                    # will stop cleanly if Chrome is truly gone.
+                    log("reconnect failed — Chrome unreachable, retrying")
+                    time.sleep(poll)
+                    continue
+                # Old CDP sessions died with the old connection; drop the
+                # learned socket state so every tab re-attaches cleanly.
+                ws_state.clear(); origin_state.clear(); presence_lost.clear()
+                pages = whatnot_pages(browser) or []
             live_urls = set()
             snapshot = []
 

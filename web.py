@@ -215,8 +215,32 @@ def api_stop():
 @app.post("/api/browser/start")
 def api_browser_start():
     cfg = load_config()
-    if chrome.port_open(int(cfg.get("debug_port", 9222))):
-        return {"message": "browser already running — left alone"}
+    port = int(cfg.get("debug_port", 9222))
+    if chrome.port_open(port):
+        # Chrome is up but may have been launched with --no-startup-window (or
+        # had every window closed), so "already running" left the user with no
+        # visible window to browse in. Open a Whatnot tab over the debug port
+        # and surface it, so the button always produces something to search in.
+        import urllib.request
+        opened = False
+        try:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/json/new?"
+                "https://www.whatnot.com/en-GB", method="PUT")
+            urllib.request.urlopen(req, timeout=3)
+            opened = True
+        except Exception:
+            try:   # older Chrome builds still accept the GET form
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/new?"
+                    "https://www.whatnot.com/en-GB", timeout=3)
+                opened = True
+            except Exception:
+                opened = False
+        return {"message": "opened a Whatnot tab in your browser — switch to "
+                "Chrome to see it" if opened else
+                "browser is running but a tab could not be opened — switch to "
+                "Chrome and open a tab yourself"}
     if not chrome.find_chrome():
         raise HTTPException(400, "Google Chrome not found on this machine")
     ok = chrome.ensure_running(cfg)
