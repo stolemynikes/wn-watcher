@@ -695,8 +695,31 @@ def entrants_from(raw) -> set[str] | None:
     return out
 
 
-def attach_giveaway_socket(page, ws_state: dict) -> None:
+def _presence_usernames(block) -> set[str]:
+    """Usernames out of one side (leaves/joins) of a presence_diff.
+
+    Phoenix presence keys each entry oddly (by topic, not user id) and hangs
+    the real user under metas[].user.username, so walk every meta rather than
+    assume the shape. Anything unreadable is skipped, never raised."""
+    out = set()
+    if not isinstance(block, dict):
+        return out
+    for entry in block.values():
+        metas = entry.get("metas") if isinstance(entry, dict) else None
+        for meta in metas or []:
+            user = meta.get("user") if isinstance(meta, dict) else None
+            name = user.get("username") if isinstance(user, dict) else None
+            if isinstance(name, str):
+                out.add(name.lower())
+    return out
+
+
+def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
     """Start passively learning this tab's giveaway content, once per tab.
+
+    my_username, when set, also turns on presence tracking: a presence_diff
+    naming YOUR account in its leaves means you just dropped out of the stream
+    (and its giveaways), which is the thing to prove against draw times.
 
     Best-effort: a tab that will not attach (closed mid-poll, CDP hiccup) is
     silently skipped and retried on a later poll — this must never be the
@@ -714,8 +737,12 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
     # winner: set once by on_frame (callback thread), consumed exactly once
     # by pop_ws_winner (main thread) — a plain dict key survives that under
     # the GIL without a lock, same as active_id/products already do below.
+    # present: None until the first presence_diff names you either way, then
+    # True/False. presence_events: your own (event, wall-time) drops/rejoins,
+    # kept for the main thread to log and correlate with draws.
     entry = {"products": {}, "active_id": None, "winner": None,
-             "counts": {}, "cdp": cdp, "last_frame": time.time()}
+             "counts": {}, "cdp": cdp, "last_frame": time.time(),
+             "present": None, "presence_events": []}
 
     def on_frame(params):
         entry["last_frame"] = time.time()
@@ -794,6 +821,16 @@ def attach_giveaway_socket(page, ws_state: dict) -> None:
                         indent=2, ensure_ascii=False), encoding="utf-8")
                 except Exception:
                     pass
+        elif event == "presence_diff" and my_username:
+            left = my_username in _presence_usernames(data.get("leaves"))
+            joined = my_username in _presence_usernames(data.get("joins"))
+            # A diff can carry both; a rejoin in the same frame is a no-op.
+            if left and not joined and entry["present"] is not False:
+                entry["present"] = False
+                entry["presence_events"].append(("left", time.time()))
+            elif joined and not left and entry["present"] is not True:
+                entry["present"] = True
+                entry["presence_events"].append(("joined", time.time()))
         elif event == "giveaway_entered":
             gv = data.get("giveaway") or {}
             pid = gv.get("productId")
@@ -827,6 +864,48 @@ def pop_ws_winner(ws_state: dict, url: str) -> dict | None:
         return None
     winner, entry["winner"] = entry["winner"], None
     return winner
+
+
+def pop_presence_events(ws_state: dict, url: str) -> list:
+    """Your own drops/rejoins seen on this tab since last asked, in order,
+    consumed once. Empty when presence tracking is off or nothing changed."""
+    entry = ws_state.get(url)
+    if not entry or not entry.get("presence_events"):
+        return []
+    events, entry["presence_events"] = entry["presence_events"], []
+    return events
+
+
+def report_presence_events(notifier, url: str, events: list,
+                           ws_state: dict) -> None:
+    """Log every own-account drop/rejoin, and push only on a drop that lands
+    while a giveaway is live on this tab — the case that actually costs you an
+    entry. Read-only: it explains what Whatnot's own presence feed reported,
+    it never touches the tab.
+
+    This is the direct test of "my presence drops and I stop being counted":
+    a `left` here, timed against a draw, is the proof a silence heuristic
+    cannot give.
+    """
+    entry = ws_state.get(url)
+    in_giveaway = bool(entry and entry.get("active_id"))
+    for kind, when in events:
+        stamp = datetime.fromtimestamp(when).strftime("%H:%M:%S")
+        if kind == "left":
+            log(f"PRESENCE: you LEFT the viewer list at {stamp}"
+                f"{' — DURING A LIVE GIVEAWAY' if in_giveaway else ''} — {url}")
+            if in_giveaway:
+                try:
+                    notifier.send(
+                        "⚠️ Dropped during a giveaway ⚠️",
+                        "Whatnot's viewer feed just removed you from a stream "
+                        "while a giveaway was live — you may not be counted. "
+                        "Reopen the tab.",
+                        url, priority="high", group="alerts")
+                except Exception as exc:
+                    log(f"presence-drop alert failed ({exc.__class__.__name__})")
+        else:
+            log(f"PRESENCE: you rejoined the viewer list at {stamp} — {url}")
 
 
 def check_presence(notifier, url: str, ws_state: dict, presence_lost: set,
@@ -1149,9 +1228,12 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     continue
 
                 live_urls.add(url)
-                attach_giveaway_socket(page, ws_state)
+                attach_giveaway_socket(page, ws_state, my_username)
                 check_presence(notifier, url, ws_state, presence_lost,
                                presence_stale_seconds)
+                report_presence_events(
+                    notifier, url,
+                    pop_presence_events(ws_state, url), ws_state)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
                                           info.get("seller", ""),
                                           bool(info.get("challengeDom")))

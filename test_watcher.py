@@ -635,6 +635,55 @@ class PresenceDropAlert(unittest.TestCase):
         self.assertEqual(spy.sent, [])
 
 
+class OwnPresenceInThePresenceFeed(unittest.TestCase):
+    """Pulling your own account out of a presence_diff, and reporting a drop
+    that lands during a live giveaway."""
+
+    def diff(self, leaves=(), joins=()):
+        mk=lambda names:{f"k{i}":{"metas":[{"user":{"username":n}}]}
+                         for i,n in enumerate(names)}
+        return {"leaves": mk(leaves), "joins": mk(joins)}
+
+    def test_reads_a_username_out_of_leaves(self):
+        got=watch._presence_usernames(self.diff(leaves=["Alice","BOB"])["leaves"])
+        self.assertEqual(got, {"alice", "bob"})
+
+    def test_a_missing_side_is_empty_not_an_error(self):
+        self.assertEqual(watch._presence_usernames(None), set())
+
+    def test_a_malformed_meta_is_skipped(self):
+        block={"k":{"metas":[{"nouser":1},{"user":{"noname":1}},
+                             {"user":{"username":"ok"}}]}}
+        self.assertEqual(watch._presence_usernames(block), {"ok"})
+
+    class Spy:
+        def __init__(self): self.sent=[]
+        def send(self,*a,**k): self.sent.append(a)
+
+    def test_a_drop_during_a_giveaway_pushes(self):
+        spy=self.Spy()
+        ws={"u":{"active_id":"p1"}}
+        watch.report_presence_events(spy,"u",[("left",1000.0)],ws)
+        self.assertEqual(len(spy.sent),1)
+
+    def test_a_drop_with_no_giveaway_only_logs(self):
+        spy=self.Spy()
+        ws={"u":{"active_id":None}}
+        watch.report_presence_events(spy,"u",[("left",1000.0)],ws)
+        self.assertEqual(spy.sent,[])
+
+    def test_a_rejoin_never_pushes(self):
+        spy=self.Spy()
+        ws={"u":{"active_id":"p1"}}
+        watch.report_presence_events(spy,"u",[("joined",1000.0)],ws)
+        self.assertEqual(spy.sent,[])
+
+    def test_events_are_consumed_once(self):
+        ws={"u":{"presence_events":[("left",1.0)]}}
+        self.assertEqual(watch.pop_presence_events(ws,"u"),[("left",1.0)])
+        self.assertEqual(watch.pop_presence_events(ws,"u"),[])
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""
