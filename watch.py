@@ -862,6 +862,11 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
     except Exception:
         return
     ws_state[url] = entry
+    # The attach moment, logged so any later presence LEFT can be read as
+    # "N seconds after attach" — the number that tells fresh-connection churn
+    # (seconds to ~a minute in) from a real mid-session drop. Without this the
+    # attach time lives only in memory and a drop cannot be placed against it.
+    log(f"socket attached — {url}")
 
 
 def current_giveaway_info(ws_state: dict, url: str) -> dict | None:
@@ -908,10 +913,15 @@ def report_presence_events(notifier, url: str, events: list,
     """
     entry = ws_state.get(url)
     in_giveaway = bool(entry and entry.get("active_id"))
+    attached_at = entry.get("attached_at") if entry else None
     for kind, when in events:
         stamp = datetime.fromtimestamp(when).strftime("%H:%M:%S")
+        # Seconds since this tab's socket attached: a leave inside the first
+        # ~minute is almost always fresh-connection churn, a leave long after
+        # is a real mid-session drop. Print it so the two never get confused.
+        since = f" ({int(when - attached_at)}s after attach)" if attached_at else ""
         if kind == "left":
-            log(f"PRESENCE: you LEFT the viewer list at {stamp}"
+            log(f"PRESENCE: you LEFT the viewer list at {stamp}{since}"
                 f"{' — DURING A LIVE GIVEAWAY' if in_giveaway else ''} — {url}")
             if in_giveaway:
                 try:
