@@ -267,6 +267,12 @@
       <button class="sm danger" id="btnCloseTabs"
         onclick="if(confirm('Close all Whatnot tabs? The browser and watcher stay running.')) post('/api/close-tabs')">close all tabs</button>
     </div>
+    <div class="row" style="margin-top:10px; gap:8px">
+      <input type="text" id="openLink" placeholder="paste a Whatnot link (e.g. a share link from the app)"
+        style="flex:1; min-width:150px" spellcheck="false"
+        onkeydown="if(event.key==='Enter')openLink()">
+      <button class="sm" onclick="openLink()">open</button>
+    </div>
   </section>
 
   <section class="card" id="cardStreamers">
@@ -458,6 +464,13 @@ async function refresh(){
   loadTabs();
   loadAccounts();
   loadStreamers();
+}
+
+async function openLink(){
+  const el=$('#openLink'); const url=(el.value||'').trim();
+  if(!url) return;
+  const j=await post('/api/open-link',{url});
+  if(j && !j.error) el.value='';
 }
 
 async function loadStreamers(){

@@ -284,6 +284,27 @@ def api_streamers():
     return {"streamers": out[:20]}
 
 
+class OpenLinkReq(BaseModel):
+    url: str
+
+
+@app.post("/api/open-link")
+def api_open_link(req: OpenLinkReq):
+    """Open any Whatnot link in the watched Chrome — including a /s/ share link
+    copied from the phone app, which Chrome follows through to the live stream.
+    So you share a show from your phone, paste it here, and the desktop starts
+    watching it."""
+    url = req.url.strip()
+    if not re.match(r"^https?://(www\.)?whatnot\.com/", url):
+        raise HTTPException(400, "not a whatnot.com link")
+    cfg = load_config()
+    if not chrome.port_open(int(cfg.get("debug_port", 9222))):
+        raise HTTPException(400, "browser is not running")
+    ok = chrome.open_visible(cfg, url)
+    return {"message": "opened — the watcher will pick it up in a second"
+            if ok else "could not open the link"}
+
+
 class OpenStreamerReq(BaseModel):
     username: str
 
