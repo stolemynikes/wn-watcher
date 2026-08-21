@@ -268,8 +268,9 @@ def api_close_tabs(req: CloseReq = CloseReq()):
 def api_streamers():
     """Recently-viewed streamers, newest first — drawn from the giveaways the
     watcher has already seen, so no extra tracking. Deduped by seller."""
-    state = json.loads(STATE_PATH.read_text(encoding="utf-8")) \
-        if STATE_PATH.exists() else {}
+    state_path = PROJECT_DIR / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) \
+        if state_path.exists() else {}
     rows = []
     for url, v in (state.get("recent_giveaways") or {}).items():
         if isinstance(v, dict) and v.get("seller"):
