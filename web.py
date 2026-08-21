@@ -54,7 +54,7 @@ SERVE_HOST = "127.0.0.1"
 
 EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", "debug_port",
             "poll_seconds", "confirm_polls", "silence_warning_minutes",
-            "watch_purchases", "panel_password", "panel_host"}
+            "watch_purchases", "panel_password", "panel_host", "panel_auth"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -88,7 +88,13 @@ def ensure_password() -> str:
 
 @app.middleware("http")
 async def guard(request, call_next):
-    """No password on the machine itself; required from anywhere else."""
+    """No password on the machine itself; required from anywhere else — unless
+    the panel is deliberately run without one (panel_auth: false), which is
+    reasonable when the only way in is already gated, e.g. a Tailscale-only
+    tailnet. Note it then also drops the password on the LAN if the panel is
+    bound to 0.0.0.0."""
+    if load_config().get("panel_auth", True) is False:
+        return await call_next(request)
     if (request.client.host if request.client else "") in LOOPBACK:
         return await call_next(request)
     import base64
