@@ -264,6 +264,17 @@ def api_close_tabs(req: CloseReq = CloseReq()):
                                          only_live=req.only_live)}
 
 
+class CloseTabReq(BaseModel):
+    url: str
+
+
+@app.post("/api/close-tab")
+def api_close_tab(req: CloseTabReq):
+    if not req.url.strip():
+        raise HTTPException(400, "no url")
+    return {"message": chrome.close_tab_by_url(load_config(), req.url.strip())}
+
+
 @app.get("/api/streamers")
 def api_streamers():
     """Recently-viewed streamers, newest first — drawn from the giveaways the

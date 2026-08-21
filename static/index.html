@@ -538,8 +538,17 @@ async function loadTabs(){
       else pill='<span class="pill live">watching</span>';
     }
     return `<div class="tab-row">${pill}<div style="flex:1;min-width:0">
-      <div>${esc(x.title||'—')}</div><div class="tab-url">${esc(x.url)}</div></div></div>`;
+      <div>${esc(x.title||'—')}</div><div class="tab-url">${esc(x.url)}</div></div>
+      <button class="sm" title="close this tab" data-url="${esc(x.url)}"
+        onclick="closeTab(this)">×</button></div>`;
   }).join('');
+}
+
+async function closeTab(btn){
+  const url=btn.getAttribute('data-url');
+  if(!url) return;
+  await post('/api/close-tab',{url});
+  loadTabs();
 }
 
 async function loadConfig(){

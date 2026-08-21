@@ -350,6 +350,34 @@ def list_whatnot_tabs(cfg: dict) -> list:
     return out
 
 
+def _stream_id(url: str) -> str:
+    """The /live/<id> segment of a Whatnot URL, ignoring query params, so two
+    links to the same stream match even if one carries ?referringSource=…."""
+    if "/live/" in (url or ""):
+        return url.split("/live/")[1].split("?")[0]
+    return ""
+
+
+def close_tab_by_url(cfg: dict, url: str) -> str:
+    """Close the one tab that matches this URL — same stream id, or the same
+    URL outright. Lets a single stream be closed without touching the rest."""
+    import urllib.request
+    port = int(cfg.get("debug_port", 9222))
+    want_id = _stream_id(url)
+    n = 0
+    for t in list_whatnot_tabs(cfg):
+        same = (t["url"] == url or
+                (want_id and _stream_id(t["url"]) == want_id))
+        if same:
+            try:
+                urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}/json/close/{t['id']}", timeout=3)
+                n += 1
+            except Exception:
+                pass
+    return f"closed {n} tab{'s' if n != 1 else ''}"
+
+
 def close_tabs(cfg: dict, only_live: bool = False) -> str:
     """Close Whatnot tabs in the radar's Chrome. only_live closes just the
     /live/ stream tabs and leaves feed/search tabs alone. Chrome, the watcher
