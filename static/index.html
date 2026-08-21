@@ -267,6 +267,16 @@
     </div>
   </section>
 
+  <section class="card" id="cardAccounts">
+    <h2>account <span class="badge" id="accBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">One Whatnot login per profile — a GB
+      account with a UK address sees UK sellers as domestic, so their
+      domestic-only giveaways become joinable. Switching stops the browser and
+      watcher and restarts them on the other account; log in the first time you
+      open a new profile.</p>
+    <div id="accounts">loading…</div>
+  </section>
+
   <section class="card">
     <h2>activity</h2>
     <div class="term">
@@ -436,6 +446,33 @@ async function refresh(){
 
   try{renderLog((await(await fetch('/api/log?lines=300')).json()).lines)}catch{}
   loadTabs();
+  loadAccounts();
+}
+
+async function loadAccounts(){
+  let d; try{d=await(await fetch('/api/accounts')).json()}catch{return}
+  const el=$('#accounts'); if(!el) return;
+  el.innerHTML='';
+  d.accounts.forEach((a,i)=>{
+    const active=(i===d.active);
+    const row=document.createElement('div');
+    row.className='tab-row';
+    row.innerHTML=`<div style="flex:1"><b>${esc(a.label)}</b>
+      <span class="hint" style="margin:0 0 0 6px">${a.username?('@'+esc(a.username)):'no username set'}</span>
+      ${active?' <span class="badge">active'+(d.browser_up?' · running':'')+'</span>':''}</div>`;
+    const name=document.createElement('button');
+    name.className='sm'; name.textContent=a.username?'rename':'set name';
+    name.onclick=()=>{ const v=prompt('Whatnot username for '+a.label+' (for win + presence detection):',a.username||'');
+      if(v!==null) post('/api/accounts/username',{index:i,username:v}); };
+    const btn=document.createElement('button');
+    btn.className='sm'; btn.textContent=active?'active':'switch to';
+    btn.disabled=active;
+    btn.onclick=()=>{ if(confirm('Switch to '+a.label+'? This stops the browser and watcher and restarts them on '+a.label+'.'))
+        post('/api/accounts/switch',{index:i}); };
+    row.appendChild(name); row.appendChild(btn); el.appendChild(row);
+  });
+  const cur=d.accounts[d.active];
+  $('#accBadge').textContent=cur?cur.label:'–';
 }
 
 async function loadTabs(){

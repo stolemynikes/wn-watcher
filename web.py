@@ -248,6 +248,72 @@ def api_browser_start():
             if ok else "could not start the browser, see the console"}
 
 
+@app.get("/api/accounts")
+def api_accounts():
+    cfg = load_config()
+    accs = chrome.accounts(cfg)
+    active = int(cfg.get("active_account", 0))
+    if not 0 <= active < len(accs):
+        active = 0
+    return {
+        "active": active,
+        "browser_up": chrome.port_open(int(cfg.get("debug_port", 9222))),
+        "accounts": [{"label": a.get("label") or f"Account {i+1}",
+                      "username": a.get("username") or "",
+                      "profile": a.get("profile") or ""}
+                     for i, a in enumerate(accs)],
+    }
+
+
+class AccountNameReq(BaseModel):
+    index: int
+    username: str
+
+
+@app.post("/api/accounts/username")
+def api_account_username(req: AccountNameReq):
+    cfg = load_config()
+    accs = chrome.accounts(cfg)
+    if not 0 <= req.index < len(accs):
+        raise HTTPException(400, "no such account")
+    accs[req.index]["username"] = req.username.strip().lstrip("@")
+    cfg["accounts"] = accs
+    save_config(cfg)
+    return {"message": f"saved name for {accs[req.index].get('label')}",
+            "restart_needed": (req.index == int(cfg.get("active_account", 0))
+                               and control.read_pid() is not None)}
+
+
+class SwitchReq(BaseModel):
+    index: int
+
+
+@app.post("/api/accounts/switch")
+def api_accounts_switch(req: SwitchReq):
+    cfg = load_config()
+    accs = chrome.accounts(cfg)
+    if not 0 <= req.index < len(accs):
+        raise HTTPException(400, "no such account")
+    if req.index == int(cfg.get("active_account", 0)) \
+            and chrome.port_open(int(cfg.get("debug_port", 9222))):
+        return {"message": f"already on {accs[req.index].get('label')}"}
+
+    # One profile at a time holds the debug port, so the whole stack has to
+    # come down and back up on the new account: watcher off, Chrome off, flip
+    # the active account, Chrome on (new profile), watcher on.
+    steps = [control.stop(), chrome.stop_chrome(cfg)]
+    cfg["accounts"] = accs
+    cfg["active_account"] = req.index
+    save_config(cfg)
+    ok = chrome.ensure_running(cfg)
+    steps.append("browser started" if ok else "browser failed to start")
+    if ok:
+        steps.append(control.start())
+    label = accs[req.index].get("label") or f"Account {req.index+1}"
+    return {"message": f"switched to {label} — log in if it is a new profile",
+            "detail": "; ".join(str(s) for s in steps)}
+
+
 def _hint(secret: str) -> str:
     secret = str(secret or "")
     return f"••••{secret[-4:]}" if len(secret) >= 4 else ""

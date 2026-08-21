@@ -1263,7 +1263,11 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     origin_state = {}         # url -> where that stream's seller ships from
     presence_lost = set()     # tabs already alerted as gone quiet
     purchases_last_call = {"t": 0.0}   # throttle for the purchases refetch()
-    my_username = str(cfg.get("my_username", "")).strip().lstrip("@").lower()
+    # The active account's own name — win detection and presence tracking are
+    # per-account, so this follows whichever account is switched on, not a
+    # single flat setting.
+    my_username = str(chrome.active_account(cfg).get("username")
+                      or cfg.get("my_username", "")).strip().lstrip("@").lower()
     if not my_username:
         log("my_username is not set — wins will only be noticed from the "
             "purchases tab, not the moment they are drawn")

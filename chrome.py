@@ -32,6 +32,37 @@ PROJECT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_DIR / "config.json"
 PROFILE_DIR = PROJECT_DIR / "chrome-profile"
 
+
+def accounts(cfg: dict) -> list:
+    """The configured accounts, oldest-style config migrated on the fly.
+
+    One Whatnot login lives in one Chrome profile, so switching account =
+    switching profile. A config without an `accounts` list is read as a single
+    account built from the flat `my_username` + the original profile, so an
+    upgrade changes nothing until a second account is actually added.
+    """
+    accs = cfg.get("accounts")
+    if isinstance(accs, list) and accs:
+        return accs
+    return [{"label": "Account 1", "profile": "chrome-profile",
+             "username": str(cfg.get("my_username", "")).strip()}]
+
+
+def active_account(cfg: dict) -> dict:
+    """Whichever account is switched on right now. Falls back to the first."""
+    accs = accounts(cfg)
+    idx = int(cfg.get("active_account", 0))
+    if not 0 <= idx < len(accs):
+        idx = 0
+    return accs[idx]
+
+
+def profile_dir_for(cfg: dict) -> Path:
+    """Filesystem path of the active account's Chrome profile."""
+    name = active_account(cfg).get("profile") or "chrome-profile"
+    p = Path(name)
+    return p if p.is_absolute() else PROJECT_DIR / p
+
 KEEP_ALIVE_FLAGS = [
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
@@ -186,10 +217,11 @@ def ensure_running(cfg: dict) -> bool:
               "or add its path to chrome_candidates() in chrome.py.")
         return False
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    profile = profile_dir_for(cfg)
+    profile.mkdir(parents=True, exist_ok=True)
     print(f"\n  Starting Chrome on port {port}")
-    print(f"  Profile: {PROFILE_DIR}")
-    subprocess.Popen(build_command(chrome, port, PROFILE_DIR,
+    print(f"  Account: {active_account(cfg).get('label', '?')}  Profile: {profile}")
+    subprocess.Popen(build_command(chrome, port, profile,
                                    bool(cfg.get("mute_audio", True))),
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -216,6 +248,45 @@ def ensure_running(cfg: dict) -> bool:
     print("  Open the streams you want, plus optionally the purchases tab:")
     print("    https://www.whatnot.com/?activityTab=purchases\n")
     return True
+
+
+def stop_chrome(cfg: dict) -> str:
+    """Quit the Chrome the radar launched, so a different profile can take the
+    debug port. Only ours: it matches on both our debug port and a profile
+    under this project, never a Chrome you opened for your own browsing.
+
+    Switching account needs this — one profile at a time holds the port, so
+    the old one must go before the new one starts.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return "psutil not installed — cannot stop Chrome"
+    port = str(int(cfg.get("debug_port", 9222)))
+    killed = 0
+    for proc in psutil.process_iter(["cmdline"]):
+        argv = proc.info.get("cmdline") or []
+        line = " ".join(argv)
+        if ("Google Chrome" not in line and "chrome" not in line.lower()):
+            continue
+        if f"--remote-debugging-port={port}" not in line:
+            continue
+        if str(PROJECT_DIR) not in line:      # only our project's profiles
+            continue
+        if "--type=" in line:                 # a renderer/gpu helper, not the
+            continue                           # main process — killing that is
+                                               # enough, its tree goes with it
+        try:
+            for child in proc.children(recursive=True):
+                child.terminate()
+            proc.terminate()
+            killed += 1
+        except psutil.Error:
+            pass
+    if not killed:
+        return "no radar Chrome was running"
+    time.sleep(1.5)
+    return f"stopped Chrome ({killed} process tree{'s' if killed != 1 else ''})"
 
 
 if __name__ == "__main__":
