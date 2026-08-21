@@ -285,8 +285,29 @@ def stop_chrome(cfg: dict) -> str:
             pass
     if not killed:
         return "no radar Chrome was running"
-    time.sleep(1.5)
-    return f"stopped Chrome ({killed} process tree{'s' if killed != 1 else ''})"
+    # SIGTERM is polite but slow — Chrome can hold the debug port for seconds
+    # after it, and a switch that relaunches on a still-open port silently
+    # no-ops (ensure_running sees "already running" and skips the new
+    # profile). So wait for the port to actually free, and escalate to a hard
+    # kill if it will not. The port being closed is the real done signal.
+    for _ in range(12):
+        if not port_open(port):
+            return f"stopped Chrome ({killed} tree{'s' if killed != 1 else ''})"
+        time.sleep(0.5)
+    for proc in psutil.process_iter(["cmdline"]):
+        line = " ".join(proc.info.get("cmdline") or [])
+        if (f"--remote-debugging-port={port}" in line
+                and str(PROJECT_DIR) in line):
+            try:
+                proc.kill()
+            except psutil.Error:
+                pass
+    for _ in range(6):
+        if not port_open(port):
+            break
+        time.sleep(0.5)
+    return (f"stopped Chrome ({killed} tree, forced)" if not port_open(port)
+            else "WARNING: Chrome would not release the debug port")
 
 
 if __name__ == "__main__":
