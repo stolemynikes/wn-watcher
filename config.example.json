@@ -35,5 +35,7 @@
   "presence_stale_seconds": 90,
   "watch_purchases": true,
   "_comment_purchases_poll": "How often (seconds) the purchases tab's own Apollo query is asked to refetch itself. Added 2026-08-13: that page never refreshes on its own — confirmed by hand — so a real win could sit unseen forever otherwise. This is one real network request, the same one a manual reload makes, so it is throttled well below anything pattern-like; 60s reads as an ordinary glance back at an open tab, not a bot.",
-  "purchases_poll_seconds": 60
+  "purchases_poll_seconds": 60,
+  "_comment_close_ended": "Close a stream tab automatically when the streamer ends their show (socket livestream_update status ENDED). Off by default: this is the one thing that touches a tab you opened, but it only ever closes a stream that is genuinely over.",
+  "close_ended_streams": false
 }

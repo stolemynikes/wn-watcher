@@ -766,6 +766,18 @@ class PresenceStateResync(unittest.TestCase):
         self.assertEqual([k for k,_ in entry["presence_events"]], ["left"])
 
 
+class StreamEndedSignal(unittest.TestCase):
+    """livestream_update status ENDED = the streamer went offline."""
+
+    def test_ended_flag_reads_true(self):
+        ws={"u":{"ended":True}}
+        self.assertTrue(watch.stream_ended(ws,"u"))
+
+    def test_playing_or_unknown_is_not_ended(self):
+        self.assertFalse(watch.stream_ended({"u":{"ended":False}},"u"))
+        self.assertFalse(watch.stream_ended({},"u"))
+
+
 class Signature(unittest.TestCase):
     """Entry count must not be part of identity, or every poll is a new
     giveaway and your phone never stops."""

@@ -773,7 +773,7 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
     entry = {"products": {}, "active_id": None, "winner": None,
              "counts": {}, "cdp": cdp, "last_frame": time.time(),
              "present": None, "presence_events": [],
-             "attached_at": time.time()}
+             "attached_at": time.time(), "ended": False}
 
     def on_frame(params):
         entry["last_frame"] = time.time()
@@ -786,6 +786,16 @@ def attach_giveaway_socket(page, ws_state: dict, my_username: str = "") -> None:
             return
         event, data = arr[3], arr[4]
         if not isinstance(data, dict):
+            return
+        if event == "livestream_update":
+            # The stream itself starting/stopping. The predecessor project
+            # measured this frame carries status PLAYING / ENDED — the clean
+            # "the streamer went offline" signal, straight off the socket.
+            status = data.get("status")
+            if status == "ENDED":
+                entry["ended"] = True
+            elif status == "PLAYING":
+                entry["ended"] = False
             return
         if event == "giveaway_entry_count_updated":
             pid = data.get("productId")
@@ -930,6 +940,13 @@ def pop_ws_winner(ws_state: dict, url: str) -> dict | None:
         return None
     winner, entry["winner"] = entry["winner"], None
     return winner
+
+
+def stream_ended(ws_state: dict, url: str) -> bool:
+    """True once this tab's socket has said the livestream ENDED — the streamer
+    went offline. Stays true; a tab does not un-end, it just closes."""
+    entry = ws_state.get(url)
+    return bool(entry and entry.get("ended"))
 
 
 def pop_presence_events(ws_state: dict, url: str) -> list:
@@ -1247,6 +1264,10 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     # tab silent this long has almost certainly lost its socket — meaning you
     # have silently fallen out of that stream and its giveaways. 0 disables.
     presence_stale_seconds = max(0, int(cfg.get("presence_stale_seconds", 90)))
+    # When a streamer ends their show, close that tab for you. Off by default —
+    # this is the one thing here that touches a tab you opened — but the socket
+    # says ENDED cleanly, so it only ever closes a stream that is genuinely over.
+    close_ended = bool(cfg.get("close_ended_streams", False))
     # "shadow" (default), "mute" or "off" — see announce_giveaway().
     foreign_domestic_mode = str(
         cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
@@ -1342,6 +1363,21 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
 
                 live_urls.add(url)
                 attach_giveaway_socket(page, ws_state, my_username)
+
+                # The streamer went offline (socket said ENDED). Note it, and
+                # if asked, close the now-dead tab. Drop it from live_urls so
+                # the end-of-loop cleanup forgets its socket state either way.
+                if stream_ended(ws_state, url):
+                    log(f"stream ended — {info.get('title') or url}"
+                        f"{' — closing the tab' if close_ended else ''}")
+                    live_urls.discard(url)
+                    if close_ended:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                    continue
+
                 check_presence(notifier, url, ws_state, presence_lost,
                                presence_stale_seconds)
                 reading = read_live_tab(text, sel, info.get("domText", ""),
