@@ -310,5 +310,70 @@ def stop_chrome(cfg: dict) -> str:
             else "WARNING: Chrome would not release the debug port")
 
 
+def open_visible(cfg: dict, url: str) -> bool:
+    """Open a URL as a real, visible tab in the radar's Chrome — not a
+    background CDP target (which has no window you can click). Relaunching the
+    Chrome binary against the same profile routes the URL into the existing
+    instance and opens a normal window/tab there.
+
+    Used to drop the user onto a streamer's profile (where their live shows are
+    one tap away) or a fresh search tab, in the account's own profile.
+    """
+    exe = find_chrome()
+    if not exe:
+        return False
+    try:
+        subprocess.Popen([exe, f"--user-data-dir={profile_dir_for(cfg)}", url],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
+def list_whatnot_tabs(cfg: dict) -> list:
+    """Every Whatnot tab open in the radar's Chrome, over the debug HTTP
+    endpoint (no Playwright, so it never collides with the watcher's own
+    connection). Each entry: {id, url, title}."""
+    import urllib.request
+    port = int(cfg.get("debug_port", 9222))
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json",
+                                    timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return []
+    out = []
+    for t in data if isinstance(data, list) else []:
+        if t.get("type") == "page" and "whatnot.com" in (t.get("url") or ""):
+            out.append({"id": t.get("id"), "url": t.get("url"),
+                        "title": t.get("title", "")})
+    return out
+
+
+def close_tabs(cfg: dict, only_live: bool = False) -> str:
+    """Close Whatnot tabs in the radar's Chrome. only_live closes just the
+    /live/ stream tabs and leaves feed/search tabs alone. Chrome, the watcher
+    and the panel are untouched — this shuts tabs, not the browser."""
+    import urllib.request
+    port = int(cfg.get("debug_port", 9222))
+    tabs = list_whatnot_tabs(cfg)
+    if only_live:
+        tabs = [t for t in tabs if "/live/" in (t["url"] or "")]
+    n = 0
+    for t in tabs:
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/close/{t['id']}", timeout=3)
+            n += 1
+        except Exception:
+            pass
+    return f"closed {n} tab{'s' if n != 1 else ''}"
+
+
 if __name__ == "__main__":
-    ensure_running(load_config())
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "close-tabs":
+        print(close_tabs(load_config(),
+                         only_live="--live" in sys.argv))
+    else:
+        ensure_running(load_config())

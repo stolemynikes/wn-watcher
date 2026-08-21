@@ -264,7 +264,17 @@
     <div id="tabs"></div>
     <div class="row" style="margin-top:12px">
       <button class="sm" id="btnBrowser" onclick="post('/api/browser/start')">open the browser</button>
+      <button class="sm danger" id="btnCloseTabs"
+        onclick="if(confirm('Close all Whatnot tabs? The browser and watcher stay running.')) post('/api/close-tabs')">close all tabs</button>
     </div>
+  </section>
+
+  <section class="card" id="cardStreamers">
+    <h2>recently viewed <span class="badge" id="strBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">Streamers whose giveaways you have seen
+      lately. Open one to land on their profile — if they are live now, their
+      show is at the top, one tap away.</p>
+    <div id="streamers">loading…</div>
   </section>
 
   <section class="card" id="cardAccounts">
@@ -447,6 +457,28 @@ async function refresh(){
   try{renderLog((await(await fetch('/api/log?lines=300')).json()).lines)}catch{}
   loadTabs();
   loadAccounts();
+  loadStreamers();
+}
+
+async function loadStreamers(){
+  let d; try{d=await(await fetch('/api/streamers')).json()}catch{return}
+  const el=$('#streamers'); if(!el) return;
+  el.innerHTML='';
+  if(!d.streamers.length){ el.innerHTML='<p class="hint">Nothing seen yet — the list fills as giveaways come in.</p>'; }
+  const now=Date.now()/1000;
+  d.streamers.forEach(s=>{
+    const mins=s.at?Math.round((now-s.at)/60):null;
+    const ago=mins===null?'':(mins<60?mins+'m ago':Math.round(mins/60)+'h ago');
+    const row=document.createElement('div');
+    row.className='tab-row';
+    row.innerHTML=`<div style="flex:1"><b>${esc(s.username)}</b>
+      <span class="hint" style="margin:0 0 0 6px">${ago}</span></div>`;
+    const btn=document.createElement('button');
+    btn.className='sm'; btn.textContent='open';
+    btn.onclick=()=>post('/api/streamers/open',{username:s.username});
+    row.appendChild(btn); el.appendChild(row);
+  });
+  $('#strBadge').textContent=d.streamers.length||'0';
 }
 
 async function loadAccounts(){

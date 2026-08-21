@@ -248,6 +248,55 @@ def api_browser_start():
             if ok else "could not start the browser, see the console"}
 
 
+class CloseReq(BaseModel):
+    only_live: bool = False
+
+
+@app.post("/api/close-tabs")
+def api_close_tabs(req: CloseReq = CloseReq()):
+    return {"message": chrome.close_tabs(load_config(),
+                                         only_live=req.only_live)}
+
+
+@app.get("/api/streamers")
+def api_streamers():
+    """Recently-viewed streamers, newest first — drawn from the giveaways the
+    watcher has already seen, so no extra tracking. Deduped by seller."""
+    state = json.loads(STATE_PATH.read_text(encoding="utf-8")) \
+        if STATE_PATH.exists() else {}
+    rows = []
+    for url, v in (state.get("recent_giveaways") or {}).items():
+        if isinstance(v, dict) and v.get("seller"):
+            rows.append((v.get("at", 0), v["seller"]))
+    seen, out = set(), []
+    for at, seller in sorted(rows, reverse=True):
+        if seller in seen:
+            continue
+        seen.add(seller)
+        out.append({"username": seller, "at": at})
+    return {"streamers": out[:20]}
+
+
+class OpenStreamerReq(BaseModel):
+    username: str
+
+
+@app.post("/api/streamers/open")
+def api_streamers_open(req: OpenStreamerReq):
+    name = req.username.strip().lstrip("@")
+    if not name:
+        raise HTTPException(400, "no username")
+    cfg = load_config()
+    if not chrome.port_open(int(cfg.get("debug_port", 9222))):
+        raise HTTPException(400, "browser is not running")
+    # The profile page, not a stale stream URL: it shows whether they are live
+    # right now, with the live show one tap away, and never 404s the way an
+    # ended stream link would.
+    ok = chrome.open_visible(cfg, f"https://www.whatnot.com/user/{name}")
+    return {"message": f"opened {name}'s profile — their live show is at the top"
+            if ok else "could not open the profile"}
+
+
 @app.get("/api/accounts")
 def api_accounts():
     cfg = load_config()

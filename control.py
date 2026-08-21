@@ -218,6 +218,10 @@ def main() -> None:
         print(stop())
     elif action == "restart":
         print(restart())
+    elif action in ("close-tabs", "close"):
+        import chrome
+        print(chrome.close_tabs(chrome.load_config(),
+                                only_live="--live" in sys.argv))
     elif action == "status":
         st = status()
         print("RUNNING" if st["running"] else "STOPPED",
