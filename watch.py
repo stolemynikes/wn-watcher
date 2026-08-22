@@ -445,17 +445,42 @@ class TabTracker:
 # --- attaching --------------------------------------------------------------
 
 
-def attach(port: int):
+def attach(port: int, timeout_ms: int = 20000):
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     try:
-        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+        browser = pw.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{port}", timeout=timeout_ms)
     except Exception as exc:
         pw.stop()
         raise SystemExit(
             f"Could not attach to Chrome on port {port} "
             f"({exc.__class__.__name__}).")
     return pw, browser
+
+
+def attach_resilient(port: int, notifier=None):
+    """Attach, but never let a slow or wedged Chrome kill the watcher. Retry
+    with backoff forever; alert once when Chrome has been unreachable long
+    enough to need a human (usually: restart Chrome). Returns (pw, browser)
+    only once it truly connects."""
+    fails = 0
+    while True:
+        try:
+            return attach(port)
+        except SystemExit as exc:
+            fails += 1
+            log(f"{exc} — retry {fails}")
+            if fails == 5 and notifier is not None:
+                try:
+                    notifier.send(
+                        "⚠️ Watcher can't reach Chrome ⚠️",
+                        "The browser's debug port is not responding. It may be "
+                        "wedged — restart Chrome (or the browser) to recover.",
+                        "https://www.whatnot.com", priority="high", group="alerts")
+                except Exception:
+                    pass
+            time.sleep(min(5 * fails, 30))
 
 
 def chrome_has_live_tabs(port: int) -> bool:
@@ -1277,7 +1302,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     purchases_poll_seconds = max(15, int(cfg.get("purchases_poll_seconds", 60)))
 
     debug_port = int(cfg.get("debug_port", 9222))
-    pw, browser = attach(debug_port)
+    pw, browser = attach_resilient(debug_port, notifier)
     trackers, challenged, warned_tabs = {}, set(), set()
     last_reconnect = 0.0   # throttle: at most one stale-connection reconnect / 15s
     challenge_wording = set()  # tabs where the wording appeared but the page was fine
@@ -1328,16 +1353,10 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     pw.stop()
                 except Exception:
                     pass
-                try:
-                    pw, browser = attach(debug_port)
-                except SystemExit:
-                    # Chrome became unreachable between the HTTP check and the
-                    # reconnect — rare. Nothing valid to poll now, so wait and
-                    # let the next iteration find it; the loop's own None-check
-                    # will stop cleanly if Chrome is truly gone.
-                    log("reconnect failed — Chrome unreachable, retrying")
-                    time.sleep(poll)
-                    continue
+                # Resilient: if Chrome is momentarily unreachable this blocks,
+                # retries and alerts, rather than returning a dead browser the
+                # next poll would read as "browser closed — stopping".
+                pw, browser = attach_resilient(debug_port, notifier)
                 # Old CDP sessions died with the old connection; drop the
                 # learned socket state so every tab re-attaches cleanly.
                 ws_state.clear(); origin_state.clear(); presence_lost.clear()
