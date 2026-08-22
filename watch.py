@@ -1268,6 +1268,9 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     # this is the one thing here that touches a tab you opened — but the socket
     # says ENDED cleanly, so it only ever closes a stream that is genuinely over.
     close_ended = bool(cfg.get("close_ended_streams", False))
+    # Raids and stray double-opens leave several tabs on one stream; keep one,
+    # close the rest. Off by default (it touches your tabs), like close_ended.
+    close_duplicates = bool(cfg.get("close_duplicate_tabs", False))
     # "shadow" (default), "mute" or "off" — see announce_giveaway().
     foreign_domestic_mode = str(
         cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
@@ -1341,6 +1344,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 pages = whatnot_pages(browser) or []
             live_urls = set()
             snapshot = []
+            seen_stream_ids = set()   # dedupe duplicate tabs of one stream
 
             for page in pages:
                 try:
@@ -1360,6 +1364,23 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     snapshot.append({"url": url, "title": info["title"],
                                      "kind": "other"})
                     continue
+
+                # A raid, or an accidental second open, leaves two tabs on the
+                # same stream. Keep the first seen this poll, close the rest —
+                # they carry the same socket, so a duplicate adds nothing but
+                # load. Matched on the /live/<id>, so ?referringSource=… copies
+                # still count as the same stream.
+                stream_id = url.split("/live/")[1].split("?")[0]
+                if stream_id in seen_stream_ids:
+                    if close_duplicates:
+                        log(f"duplicate tab of the same stream — closing — {url}")
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                        continue
+                else:
+                    seen_stream_ids.add(stream_id)
 
                 live_urls.add(url)
                 attach_giveaway_socket(page, ws_state, my_username)
