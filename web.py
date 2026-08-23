@@ -54,7 +54,10 @@ SERVE_HOST = "127.0.0.1"
 
 EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", "debug_port",
             "poll_seconds", "confirm_polls", "silence_warning_minutes",
-            "watch_purchases", "panel_password", "panel_host", "panel_auth"}
+            "watch_purchases", "panel_password", "panel_host", "panel_auth",
+            "max_live_tabs", "watchdog_stuck_seconds", "close_ended_streams",
+            "close_duplicate_tabs", "restart_chrome_on_stuck",
+            "foreign_domestic_giveaways", "presence_stale_seconds"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
