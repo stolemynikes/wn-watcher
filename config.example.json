@@ -41,5 +41,7 @@
   "_comment_close_dupes": "Close duplicate tabs of the same stream (same /live/ UUID), keeping one. A raid or an accidental second open otherwise leaves 2-3 tabs on one stream. Off by default: it closes tabs you opened.",
   "close_duplicate_tabs": false,
   "_comment_watchdog": "If the poll loop freezes this many seconds (a wedged tab or a degraded Chrome debug port), the watcher auto-restarts itself and pushes a notice. Min 60.",
-  "watchdog_stuck_seconds": 120
+  "watchdog_stuck_seconds": 120,
+  "_comment_restart_chrome": "If the watcher cannot reach Chrome after several tries (debug port truly wedged, usually from RAM/tab overload), restart Chrome itself. The fresh Chrome opens with only its one blank tab - your old streams are NOT reopened, on purpose, since that reload is what overloads it. Off by default; it closes your tabs.",
+  "restart_chrome_on_stuck": false
 }

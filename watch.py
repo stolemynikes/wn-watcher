@@ -461,12 +461,18 @@ def attach(port: int, timeout_ms: int = 20000):
     return pw, browser
 
 
-def attach_resilient(port: int, notifier=None):
+def attach_resilient(port: int, notifier=None, cfg=None):
     """Attach, but never let a slow or wedged Chrome kill the watcher. Retry
-    with backoff forever; alert once when Chrome has been unreachable long
-    enough to need a human (usually: restart Chrome). Returns (pw, browser)
-    only once it truly connects."""
+    with backoff forever. When Chrome stays unreachable and
+    restart_chrome_on_stuck is on, restart Chrome itself — a truly wedged debug
+    port only recovers that way. The fresh Chrome opens with just its one blank
+    Whatnot tab, NOT the old set: reopening every stream is exactly the RAM
+    load that wedges it, so recovery deliberately leaves that to you.
+
+    Returns (pw, browser) only once it truly connects."""
+    restart_on_stuck = bool(cfg and cfg.get("restart_chrome_on_stuck", False))
     fails = 0
+    last_chrome_restart = 0.0
     while True:
         try:
             return attach(port)
@@ -477,11 +483,26 @@ def attach_resilient(port: int, notifier=None):
                 try:
                     notifier.send(
                         "⚠️ Watcher can't reach Chrome ⚠️",
-                        "The browser's debug port is not responding. It may be "
-                        "wedged — restart Chrome (or the browser) to recover.",
+                        "The browser's debug port is not responding — it looks "
+                        "wedged." + (" Restarting Chrome now." if restart_on_stuck
+                                     else " Restart Chrome to recover."),
                         "https://www.whatnot.com", priority="high", group="alerts")
                 except Exception:
                     pass
+            # A wedged debug port only clears by restarting Chrome. Do it after
+            # enough failures, at most once every few minutes so we never spin
+            # on it. Fresh Chrome = one blank tab, no RAM-heavy stream restore.
+            if (restart_on_stuck and fails >= 6
+                    and time.monotonic() - last_chrome_restart > 180):
+                log("Chrome debug port wedged — restarting Chrome itself")
+                try:
+                    chrome.stop_chrome(cfg)
+                    chrome.ensure_running(cfg)
+                except Exception as exc2:
+                    log(f"Chrome restart failed ({exc2.__class__.__name__})")
+                last_chrome_restart = time.monotonic()
+                fails = 0
+                continue
             time.sleep(min(5 * fails, 30))
 
 
@@ -1304,7 +1325,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     purchases_poll_seconds = max(15, int(cfg.get("purchases_poll_seconds", 60)))
 
     debug_port = int(cfg.get("debug_port", 9222))
-    pw, browser = attach_resilient(debug_port, notifier)
+    pw, browser = attach_resilient(debug_port, notifier, cfg)
     trackers, challenged, warned_tabs = {}, set(), set()
     last_reconnect = 0.0   # throttle: at most one stale-connection reconnect / 15s
     challenge_wording = set()  # tabs where the wording appeared but the page was fine
@@ -1388,7 +1409,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 # Resilient: if Chrome is momentarily unreachable this blocks,
                 # retries and alerts, rather than returning a dead browser the
                 # next poll would read as "browser closed — stopping".
-                pw, browser = attach_resilient(debug_port, notifier)
+                pw, browser = attach_resilient(debug_port, notifier, cfg)
                 # Old CDP sessions died with the old connection; drop the
                 # learned socket state so every tab re-attaches cleanly.
                 ws_state.clear(); origin_state.clear(); presence_lost.clear()
