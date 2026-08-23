@@ -35,8 +35,10 @@ Two narrow exceptions, both added 2026-08-13:
 
 import argparse
 import json
+import os
 import re
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1329,8 +1331,38 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     warned_no_tabs = False
     log("attached — watching your tabs. Nothing here opens or closes them.")
 
+    # Watchdog: the poll loop bumps this each pass. If a Playwright call hangs
+    # on a wedged page/Chrome — the process stays alive but the loop freezes,
+    # publishing nothing and pushing nothing — the watchdog re-execs the whole
+    # watcher after WATCHDOG_STUCK_SECONDS, which os.execv keeps on the same
+    # pid so the pid file stays valid. A fresh start re-attaches (and
+    # attach_resilient rides out a slow Chrome), so a hang self-heals instead
+    # of needing a hand.
+    heartbeat = [time.monotonic()]
+    stuck_after = max(60, int(cfg.get("watchdog_stuck_seconds", 120)))
+
+    def _watchdog():
+        while True:
+            time.sleep(20)
+            frozen = time.monotonic() - heartbeat[0]
+            if frozen > stuck_after:
+                log(f"poll loop frozen for {int(frozen)}s — auto-restarting "
+                    f"the watcher")
+                try:
+                    notifier.send(
+                        "🔄 Watcher auto-restarted",
+                        "The loop froze (a wedged tab or browser) and restarted "
+                        "itself. If it keeps happening, restart Chrome.",
+                        "https://www.whatnot.com", priority="high", group="alerts")
+                except Exception:
+                    pass
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+
     try:
         while True:
+            heartbeat[0] = time.monotonic()
             pages = whatnot_pages(browser)
             if pages is None:
                 log("the browser was closed — stopping.")

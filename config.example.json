@@ -39,5 +39,7 @@
   "_comment_close_ended": "Close a stream tab automatically when the streamer ends their show (socket livestream_update status ENDED). Off by default: this is the one thing that touches a tab you opened, but it only ever closes a stream that is genuinely over.",
   "close_ended_streams": false,
   "_comment_close_dupes": "Close duplicate tabs of the same stream (same /live/ UUID), keeping one. A raid or an accidental second open otherwise leaves 2-3 tabs on one stream. Off by default: it closes tabs you opened.",
-  "close_duplicate_tabs": false
+  "close_duplicate_tabs": false,
+  "_comment_watchdog": "If the poll loop freezes this many seconds (a wedged tab or a degraded Chrome debug port), the watcher auto-restarts itself and pushes a notice. Min 60.",
+  "watchdog_stuck_seconds": 120
 }
