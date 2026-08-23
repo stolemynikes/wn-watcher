@@ -447,7 +447,7 @@ class TabTracker:
 # --- attaching --------------------------------------------------------------
 
 
-def attach(port: int, timeout_ms: int = 20000):
+def attach(port: int, timeout_ms: int = 12000):
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     try:
@@ -479,7 +479,7 @@ def attach_resilient(port: int, notifier=None, cfg=None):
         except SystemExit as exc:
             fails += 1
             log(f"{exc} — retry {fails}")
-            if fails == 5 and notifier is not None:
+            if fails == 3 and notifier is not None:
                 try:
                     notifier.send(
                         "⚠️ Watcher can't reach Chrome ⚠️",
@@ -492,7 +492,7 @@ def attach_resilient(port: int, notifier=None, cfg=None):
             # A wedged debug port only clears by restarting Chrome. Do it after
             # enough failures, at most once every few minutes so we never spin
             # on it. Fresh Chrome = one blank tab, no RAM-heavy stream restore.
-            if (restart_on_stuck and fails >= 6
+            if (restart_on_stuck and fails >= 3
                     and time.monotonic() - last_chrome_restart > 180):
                 log("Chrome debug port wedged — restarting Chrome itself")
                 try:
@@ -1319,6 +1319,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     # Raids and stray double-opens leave several tabs on one stream; keep one,
     # close the rest. Off by default (it touches your tabs), like close_ended.
     close_duplicates = bool(cfg.get("close_duplicate_tabs", False))
+    # Hard ceiling on simultaneous live streams — the RAM guard. 0 disables.
+    max_live_tabs = max(0, int(cfg.get("max_live_tabs", 0)))
     # "shadow" (default), "mute" or "off" — see announce_giveaway().
     foreign_domestic_mode = str(
         cfg.get("foreign_domestic_giveaways", "shadow")).strip().lower()
@@ -1417,6 +1419,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             live_urls = set()
             snapshot = []
             seen_stream_ids = set()   # dedupe duplicate tabs of one stream
+            live_pages = []           # (url, page) of each kept live tab, for the cap
 
             for page in pages:
                 try:
@@ -1455,6 +1458,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     seen_stream_ids.add(stream_id)
 
                 live_urls.add(url)
+                live_pages.append((url, page))
                 attach_giveaway_socket(page, ws_state, my_username)
 
                 # The streamer went offline (socket said ENDED). Note it, and
@@ -1583,6 +1587,25 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                                       foreign_domestic_mode)
                 elif event == "ended":
                     log(f"giveaway ended — {url}")
+
+            # Cap the number of live streams open at once. A wall of live
+            # video tabs is what drives Chrome's RAM up until its debug port
+            # wedges (measured 2026-08-23: 13 tabs / ~5 GB, repeated wedges).
+            # Over the cap, close the oldest-attached streams — newest opens
+            # are the ones you just chose to watch. Bounds RAM so the wedge,
+            # and the slow auto-recovery it triggers, stop happening.
+            if max_live_tabs and len(live_pages) > max_live_tabs:
+                by_age = sorted(
+                    live_pages,
+                    key=lambda up: (ws_state.get(up[0], {}).get("attached_at", 0)))
+                for url, page in by_age[:len(live_pages) - max_live_tabs]:
+                    log(f"over the {max_live_tabs}-tab cap — closing oldest "
+                        f"stream — {url}")
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    live_urls.discard(url)
 
             for gone in set(trackers) - live_urls:
                 trackers.pop(gone, None)

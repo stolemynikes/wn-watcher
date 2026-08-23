@@ -43,5 +43,7 @@
   "_comment_watchdog": "If the poll loop freezes this many seconds (a wedged tab or a degraded Chrome debug port), the watcher auto-restarts itself and pushes a notice. Min 60.",
   "watchdog_stuck_seconds": 120,
   "_comment_restart_chrome": "If the watcher cannot reach Chrome after several tries (debug port truly wedged, usually from RAM/tab overload), restart Chrome itself. The fresh Chrome opens with only its one blank tab - your old streams are NOT reopened, on purpose, since that reload is what overloads it. Off by default; it closes your tabs.",
-  "restart_chrome_on_stuck": false
+  "restart_chrome_on_stuck": false,
+  "_comment_max_tabs": "Hard ceiling on how many live streams may be open at once. Over it, the watcher closes the oldest-attached stream. A wall of live video tabs is what drives Chrome RAM up until its debug port wedges, so this bounds RAM and stops the wedges. 0 disables.",
+  "max_live_tabs": 0
 }
