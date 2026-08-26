@@ -57,7 +57,8 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "watch_purchases", "panel_password", "panel_host", "panel_auth",
             "max_live_tabs", "watchdog_stuck_seconds", "close_ended_streams",
             "close_duplicate_tabs", "restart_chrome_on_stuck",
-            "foreign_domestic_giveaways", "presence_stale_seconds"}
+            "foreign_domestic_giveaways", "presence_stale_seconds",
+            "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -370,7 +371,7 @@ def api_invoice(order_id: str = "", tracking: str = ""):
         match = orders[0]
     if match is None:
         raise HTTPException(404, "no matching order is open — open it first")
-    return Response(content=invoice.invoice_html(match), media_type="text/html")
+    return Response(content=invoice.invoice_html(match, cfg), media_type="text/html")
 
 
 @app.get("/api/accounts")

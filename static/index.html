@@ -288,6 +288,20 @@
       <button class="sm" onclick="invoiceByTracking()">make invoice</button>
     </div>
     <div id="invoices">loading…</div>
+    <details style="margin-top:12px">
+      <summary class="hint" style="cursor:pointer">your details on the invoice</summary>
+      <div style="margin-top:10px">
+        <label class="f"><span>Your name (recipient)</span>
+          <input type="text" id="invName" placeholder="e.g. Pepijn Scheer"></label>
+        <label class="f" style="margin-top:8px"><span>Your NL address</span>
+          <textarea id="invAddr" rows="3" placeholder="Street 1&#10;1234 AB City&#10;Netherlands"
+            style="width:100%;font:inherit;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:inherit"></textarea></label>
+        <label class="f" style="margin-top:8px"><span>Default value for a giveaway item</span>
+          <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
+        <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
+          <span class="saved" id="invSaved"></span></div>
+      </div>
+    </details>
   </section>
 
   <section class="card" id="cardStreamers">
@@ -480,6 +494,7 @@ async function refresh(){
   loadAccounts();
   loadStreamers();
   loadInvoices();
+  loadInvoiceDetails();
 }
 
 async function openLink(){
@@ -512,6 +527,21 @@ function invoiceByTracking(){
   const t=($('#invTrack').value||'').trim();
   if(!t){ toast('paste a tracking number, or use a button above',true); return; }
   window.open('/invoice?tracking='+encodeURIComponent(t),'_blank');
+}
+
+async function loadInvoiceDetails(){
+  let c; try{c=await(await fetch('/api/config')).json()}catch{return}
+  if($('#invName')&&document.activeElement!==$('#invName')) $('#invName').value=c.invoice_buyer_name||'';
+  if($('#invAddr')&&document.activeElement!==$('#invAddr')) $('#invAddr').value=c.invoice_buyer_address||'';
+  if($('#invGivy')&&document.activeElement!==$('#invGivy')) $('#invGivy').value=(c.invoice_giveaway_value??'');
+}
+
+async function saveInvoiceDetails(){
+  const body={invoice_buyer_name:$('#invName').value,
+              invoice_buyer_address:$('#invAddr').value,
+              invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0};
+  const j=await post('/api/config',body);
+  if(j&&!j.error){ $('#invSaved').textContent='saved'; setTimeout(()=>$('#invSaved').textContent='',1500); }
 }
 
 async function loadStreamers(){

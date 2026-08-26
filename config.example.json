@@ -45,5 +45,9 @@
   "_comment_restart_chrome": "If the watcher cannot reach Chrome after several tries (debug port truly wedged, usually from RAM/tab overload), restart Chrome itself. The fresh Chrome opens with only its one blank tab - your old streams are NOT reopened, on purpose, since that reload is what overloads it. Off by default; it closes your tabs.",
   "restart_chrome_on_stuck": false,
   "_comment_max_tabs": "Hard ceiling on how many live streams may be open at once. Over it, the watcher closes the oldest-attached stream. A wall of live video tabs is what drives Chrome RAM up until its debug port wedges, so this bounds RAM and stops the wedges. 0 disables.",
-  "max_live_tabs": 0
+  "max_live_tabs": 0,
+  "_comment_invoice": "For the Invoices tab: your name and NL address go on the customs invoice as the recipient (the Whatnot order only has the myUS forwarding address). invoice_giveaway_value is the default declared value for a free/giveaway item (order total 0), which you can still edit per invoice.",
+  "invoice_buyer_name": "",
+  "invoice_buyer_address": "",
+  "invoice_giveaway_value": 0
 }
