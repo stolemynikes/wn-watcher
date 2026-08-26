@@ -232,100 +232,160 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
     is_free = isinstance(tc.get("amount"), (int, float)) and tc["amount"] == 0
     paid_label = f"{paid}  (giveaway — item won, not purchased)" if is_free else paid
 
-    info = "".join(
-        f"<tr><td class='k'>{_e(k)}</td><td>{_e(v)}</td></tr>"
-        for k, v in [
-            ("Order number", o.get("order_id")),
-            ("Order date", o.get("order_date")),
-            ("Category", o.get("category")),
-            ("Amount paid", paid_label),
+    # Customs declares in EUR for a Dutch import; the amount actually paid is
+    # shown separately in the order's own currency (£0 for a giveaway).
+    reason = "Giveaway prize / promotional prize" if is_free else "Purchase"
+    ship_type = "Non-commercial" if is_free else "Commercial"
+    terms = ("Recipient did not purchase the goods — won free of charge"
+             if is_free else "Goods purchased by the recipient")
+    recip_name = _e(cfg.get("invoice_buyer_name") or "")
+    seller = _e(o.get("seller"))
+    default_country = _e(cfg.get("invoice_default_origin") or "")
+    condition = "New / sealed"
+
+    ship_rows = "".join(
+        f"<tr><td class='k'>{_e(k)}</td><td>{v}</td></tr>" for k, v in [
+            ("Date", _e(o.get("order_date"))),
+            ("Order number", _e(o.get("order_id"))),
+            ("Reason for export", reason),
+            ("Type of shipment", ship_type),
+            ("Terms of shipment", terms),
+            ("Amount paid", _e(paid_label)),
         ] if v)
+
+    # Giveaway wording customs officers expect to see spelled out.
+    giveaway_note = f"""
+      <p>The goods listed above were won free of charge by the recipient
+         through a promotional giveaway hosted on the Whatnot platform. No
+         purchase was made and no payment was made by the recipient to obtain
+         the merchandise.</p>
+      <p>The goods are imported solely for the recipient's personal Pokémon
+         Trading Card Game collection and personal enjoyment, and are not
+         intended for resale, commercial use, or business purposes.</p>
+      <p>The declared value represents the estimated normal retail / market
+         value of the merchandise, provided for customs valuation only. It does
+         not represent an amount paid by the recipient — no sales transaction
+         took place between the recipient and the giveaway organizer.</p>""" \
+        if is_free else f"""
+      <p>The declared value above is the price paid by the recipient for these
+         goods, imported for personal use and not for resale.</p>"""
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Invoice {_e(o.get('order_id'))}</title>
+<title>Pro forma invoice {_e(o.get('order_id'))}</title>
 <style>
   :root {{ color-scheme: light; }}
   * {{ box-sizing: border-box; }}
-  body {{ font: 15px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+  body {{ font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
           color: #111; background: #fff; margin: 0; padding: 32px; }}
-  .sheet {{ max-width: 720px; margin: 0 auto; }}
+  .sheet {{ max-width: 760px; margin: 0 auto; }}
   header {{ display: flex; align-items: center; justify-content: space-between;
-            border-bottom: 3px solid #FFDE00; padding-bottom: 16px; margin-bottom: 24px; }}
+            border-bottom: 3px solid #FFDE00; padding-bottom: 16px; margin-bottom: 22px; }}
   .brand {{ display: flex; align-items: center; gap: 10px; }}
   .mark {{ width: 34px; height: 34px; border-radius: 9px; background: #FFDE00;
            display: grid; place-items: center; font-weight: 800; color: #111;
            font-size: 20px; }}
   .brand b {{ font-size: 22px; letter-spacing: -.02em; }}
-  h1 {{ font-size: 15px; text-transform: uppercase; letter-spacing: .12em;
-        color: #666; margin: 0; text-align: right; font-weight: 700; }}
-  h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: .1em;
+  .title {{ text-align: right; }}
+  .title h1 {{ font-size: 16px; text-transform: uppercase; letter-spacing: .1em;
+        color: #111; margin: 0; font-weight: 800; }}
+  .title span {{ font-size: 11px; text-transform: uppercase; letter-spacing: .14em;
+        color: #999; }}
+  h2 {{ font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
         color: #888; margin: 22px 0 8px; }}
   table {{ width: 100%; border-collapse: collapse; }}
-  td {{ padding: 7px 0; vertical-align: top; }}
-  .info td.k {{ color: #666; width: 42%; }}
-  .items th {{ text-align: left; font-size: 12px; text-transform: uppercase;
-               letter-spacing: .08em; color: #888; border-bottom: 1px solid #eee;
-               padding: 0 0 8px; }}
-  .items td {{ border-bottom: 1px solid #f2f2f2; padding: 12px 0; }}
+  td, th {{ padding: 6px 0; vertical-align: top; text-align: left; }}
+  .info td.k {{ color: #666; width: 40%; }}
+  .items th {{ font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+               color: #888; border-bottom: 1px solid #eee; padding: 0 8px 8px 0; }}
+  .items td {{ border-bottom: 1px solid #f2f2f2; padding: 10px 8px 10px 0; }}
   .num {{ text-align: right; white-space: nowrap; }}
-  .cols {{ display: flex; gap: 32px; flex-wrap: wrap; }}
-  .cols > div {{ flex: 1; min-width: 200px; }}
+  .cols {{ display: flex; gap: 24px; flex-wrap: wrap; }}
+  .cols > div {{ flex: 1; min-width: 210px; }}
   .box {{ background: #fafafa; border: 1px solid #eee; border-radius: 10px;
-          padding: 12px 14px; min-height: 62px; }}
-  .grand {{ font-weight: 700; border-top: 2px solid #111; }}
-  .foot {{ margin-top: 26px; color: #999; font-size: 12px;
-           border-top: 1px solid #eee; padding-top: 12px; }}
-  #unit {{ width: 100px; text-align: right; font: inherit; padding: 4px 6px;
-           border: 1px solid #ccc; border-radius: 6px; }}
+          padding: 12px 14px; min-height: 96px; font-size: 13px; }}
+  .box .l {{ color: #888; }}
+  .grand td {{ font-weight: 700; border-top: 2px solid #111; padding-top: 10px; }}
+  .decl {{ font-size: 12.5px; color: #333; }}
+  .decl p {{ margin: 6px 0; }}
+  .sign {{ margin-top: 22px; display: flex; gap: 40px; flex-wrap: wrap;
+           font-size: 13px; }}
+  .sign .line {{ border-bottom: 1px solid #999; min-width: 200px;
+                 display: inline-block; height: 24px; }}
+  .foot {{ margin-top: 24px; color: #999; font-size: 11px;
+           border-top: 1px solid #eee; padding-top: 10px; }}
+  input.ed {{ font: inherit; padding: 3px 6px; border: 1px solid #ccc;
+              border-radius: 6px; }}
+  input.val {{ width: 92px; text-align: right; }}
+  input.qty {{ width: 60px; text-align: right; }}
+  input.org {{ width: 140px; }}
   @media print {{ body {{ padding: 0; }} .noprint {{ display: none; }}
-                  #unit {{ border: 0; padding: 0; }} }}
+                  input.ed {{ border: 0; padding: 0; }} }}
 </style></head><body><div class="sheet">
   <header>
     <div class="brand"><div class="mark">w</div><b>whatnot</b></div>
-    <h1>Commercial invoice / Customs declaration</h1>
+    <div class="title"><h1>Pro forma invoice</h1><span>For customs purposes only</span></div>
   </header>
 
   <div class="cols">
-    <div><h2>From (seller)</h2><div class="box">{_e(o.get('seller'))}<br>United Kingdom</div></div>
-    <div><h2>To (recipient)</h2><div class="box">{to}</div></div>
+    <div><h2>Shipper / exporter</h2><div class="box">
+      <span class="l">Name</span><br>{seller}<br>
+      <span class="l">Country</span><br>United Kingdom</div></div>
+    <div><h2>Consignee / importer</h2><div class="box">{to}</div></div>
     <div><h2>Forwarded via</h2><div class="box">{via}</div></div>
   </div>
 
-  <h2>Order</h2>
-  <table class="info">{info}</table>
+  <h2>Shipment information</h2>
+  <table class="info">{ship_rows}</table>
 
-  <h2>Goods</h2>
+  <h2>Description of goods</h2>
   <table class="items">
-    <tr><th>Description</th><th class="num">Qty</th>
-        <th class="num">Unit value</th><th class="num">Amount</th></tr>
+    <tr><th>Description</th><th>Condition</th><th class="num">Qty</th>
+        <th class="num">Unit value</th><th class="num">Total value</th>
+        <th>Country of origin</th></tr>
     <tr>
       <td>{_e(o.get('item'))}</td>
-      <td class="num">{qty}</td>
-      <td class="num">{sym}<input id="unit" type="number" step="0.01"
+      <td><input class="ed" id="cond" value="{condition}"></td>
+      <td class="num"><input class="ed qty" id="qty" type="number" min="1"
+          value="{qty}" oninput="recalc()"></td>
+      <td class="num">€<input class="ed val" id="unit" type="number" step="0.01"
           min="0" value="{unit:.2f}" oninput="recalc()"></td>
       <td class="num" id="line">—</td>
+      <td><input class="ed org" id="org" value="{default_country}"
+          placeholder="if known"></td>
     </tr>
-    <tr class="grand"><td colspan="3">Total declared value</td>
-        <td class="num" id="grand">—</td></tr>
+    <tr class="grand"><td colspan="4">Total declared value</td>
+        <td class="num" id="grand">—</td><td></td></tr>
   </table>
 
+  <h2>Customs declaration / additional information</h2>
+  <div class="decl">{giveaway_note}
+    <p>I declare that the information provided above is true and accurate to the
+       best of my knowledge.</p>
+  </div>
+
+  <div class="sign">
+    <div>Recipient<br><b>{recip_name or '—'}</b></div>
+    <div>Date<br>{_e(o.get('order_date')) or '&nbsp;'}</div>
+    <div>Signature<br><span class="line">&nbsp;</span></div>
+  </div>
+
   <p class="foot">Reformatted from the buyer's Whatnot order for a customs
-     declaration. The declared value is editable: a paid order carries its
-     price; a free/giveaway item is declared at its real market value, which
-     you set — customs asks for the goods' worth, not what was paid.</p>
+     declaration. Editable: condition, quantity, unit value and country of
+     origin. Declared value is the goods' market worth, not the amount paid
+     (a giveaway item is won at £0).</p>
   <p class="noprint" style="text-align:center;margin-top:18px">
     <button onclick="window.print()"
       style="padding:10px 20px;border-radius:10px;border:0;background:#111;color:#fff;font-size:15px;cursor:pointer">
       Print / Save as PDF</button></p>
 </div>
 <script>
-  const SYM = {json.dumps(sym)}, QTY = {qty};
   function recalc() {{
     const u = parseFloat(document.getElementById('unit').value || '0') || 0;
-    const t = (u * QTY).toFixed(2);
-    document.getElementById('line').textContent = SYM + t;
-    document.getElementById('grand').textContent = SYM + t;
+    const q = parseInt(document.getElementById('qty').value || '1') || 1;
+    const t = '€' + (u * q).toFixed(2);
+    document.getElementById('line').textContent = t;
+    document.getElementById('grand').textContent = t;
   }}
   recalc();
 </script>

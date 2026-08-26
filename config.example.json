@@ -53,5 +53,6 @@
   "invoice_buyer_street": "",
   "invoice_buyer_postcode": "",
   "invoice_buyer_city": "",
-  "invoice_buyer_country": "Netherlands"
+  "invoice_buyer_country": "Netherlands",
+  "invoice_default_origin": ""
 }
