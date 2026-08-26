@@ -309,8 +309,16 @@
         </div>
         <label class="f" style="margin-top:8px"><span>Default value for a giveaway item (€)</span>
           <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
+        <label class="f" style="margin-top:8px"><span>Default country of origin <span class="hint">(optional)</span></span>
+          <input type="text" id="invOrigin" placeholder="e.g. Japan"></label>
         <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
           <span class="saved" id="invSaved"></span></div>
+        <div class="row" style="margin-top:12px; gap:8px; align-items:center">
+          <span class="hint" id="sigState">signature: none</span>
+          <input type="file" id="sigFile" accept="image/*" style="display:none" onchange="uploadSignature(this)">
+          <button class="sm" onclick="$('#sigFile').click()">upload signature</button>
+          <button class="sm danger" onclick="removeSignature()">remove</button>
+        </div>
       </div>
     </details>
   </section>
@@ -546,6 +554,8 @@ async function loadInvoiceDetails(){
   set('#invProv',c.invoice_buyer_province);
   set('#invCountry',c.invoice_buyer_country||'Netherlands');
   set('#invGivy',c.invoice_giveaway_value);
+  set('#invOrigin',c.invoice_default_origin);
+  loadSignatureState();
 }
 
 async function saveInvoiceDetails(){
@@ -555,9 +565,25 @@ async function saveInvoiceDetails(){
               invoice_buyer_city:$('#invCity').value,
               invoice_buyer_province:$('#invProv').value,
               invoice_buyer_country:$('#invCountry').value||'Netherlands',
+              invoice_default_origin:$('#invOrigin').value,
               invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0};
   const j=await post('/api/config',body);
   if(j&&!j.error){ $('#invSaved').textContent='saved'; setTimeout(()=>$('#invSaved').textContent='',1500); }
+}
+
+async function loadSignatureState(){
+  try{const d=await(await fetch('/api/signature')).json();
+    if($('#sigState')) $('#sigState').textContent='signature: '+(d.has?'uploaded ✓':'none');
+  }catch{}
+}
+function uploadSignature(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=async()=>{ const j=await post('/api/signature',{data:r.result}); loadSignatureState(); inp.value=''; };
+  r.readAsDataURL(f);
+}
+async function removeSignature(){
+  await fetch('/api/signature',{method:'DELETE'}); loadSignatureState();
 }
 
 async function loadStreamers(){

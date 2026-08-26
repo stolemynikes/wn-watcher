@@ -174,6 +174,17 @@ def _e(s) -> str:
     return html.escape(str(s or ""))
 
 
+def signature_data_uri() -> str:
+    """The uploaded signature image as a data: URI, or empty if none set."""
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "signature.b64"
+    try:
+        d = p.read_text(encoding="utf-8").strip()
+        return d if d.startswith("data:image/") else ""
+    except OSError:
+        return ""
+
+
 _SYM = {"GBP": "£", "EUR": "€", "USD": "$"}
 
 
@@ -367,7 +378,7 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
   <div class="sign">
     <div>Recipient<br><b>{recip_name or '—'}</b></div>
     <div>Date<br>{_e(o.get('order_date')) or '&nbsp;'}</div>
-    <div>Signature<br><span class="line">&nbsp;</span></div>
+    <div>Signature<br>{(f'<img src="{signature_data_uri()}" style="max-height:56px;max-width:220px;margin-top:2px">' if signature_data_uri() else '<span class="line">&nbsp;</span>')}</div>
   </div>
 
   <p class="foot">Reformatted from the buyer's Whatnot order for a customs

@@ -375,6 +375,37 @@ def api_invoice(order_id: str = "", tracking: str = ""):
     return Response(content=invoice.invoice_html(match, cfg), media_type="text/html")
 
 
+SIGNATURE_PATH = PROJECT_DIR / "signature.b64"
+
+
+class SignatureReq(BaseModel):
+    data: str
+
+
+@app.post("/api/signature")
+def api_signature(req: SignatureReq):
+    """Store a signature image (a data: URI from the panel) to drop onto the
+    invoice. Kept in a file, not config, so config stays small and readable."""
+    data = req.data.strip()
+    if not data.startswith("data:image/"):
+        raise HTTPException(400, "not an image")
+    if len(data) > 800_000:
+        raise HTTPException(400, "image too large — use a smaller/cropped one")
+    SIGNATURE_PATH.write_text(data, encoding="utf-8")
+    return {"message": "signature saved"}
+
+
+@app.get("/api/signature")
+def api_signature_get():
+    return {"has": SIGNATURE_PATH.exists()}
+
+
+@app.delete("/api/signature")
+def api_signature_delete():
+    SIGNATURE_PATH.unlink(missing_ok=True)
+    return {"message": "signature removed"}
+
+
 @app.get("/api/accounts")
 def api_accounts():
     cfg = load_config()
