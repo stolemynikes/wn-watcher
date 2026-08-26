@@ -339,6 +339,40 @@ def api_streamers_open(req: OpenStreamerReq):
             if ok else "could not open the profile"}
 
 
+@app.get("/api/orders")
+def api_orders():
+    """Whatnot Order Details pages open in the browser, parsed into invoice
+    data. Open an order (it shows the tracking) and it appears here."""
+    import invoice
+    cfg = load_config()
+    orders = invoice.read_open_orders(int(cfg.get("debug_port", 9222)))
+    return {"orders": [{"order_id": o.get("order_id"), "seller": o.get("seller"),
+                        "item": o.get("item"), "tracking": o.get("tracking"),
+                        "total": o.get("total_display"), "status": o.get("status"),
+                        "url": o.get("url")} for o in orders]}
+
+
+@app.get("/invoice")
+def api_invoice(order_id: str = "", tracking: str = ""):
+    """A print-ready customs invoice for one open order, matched by its order
+    number or its tracking number."""
+    import invoice
+    cfg = load_config()
+    orders = invoice.read_open_orders(int(cfg.get("debug_port", 9222)))
+    want_o, want_t = order_id.strip(), tracking.strip().upper()
+    match = None
+    for o in orders:
+        if (want_o and str(o.get("order_id")) == want_o) or \
+           (want_t and str(o.get("tracking", "")).upper() == want_t):
+            match = o
+            break
+    if match is None and not want_o and not want_t and len(orders) == 1:
+        match = orders[0]
+    if match is None:
+        raise HTTPException(404, "no matching order is open — open it first")
+    return Response(content=invoice.invoice_html(match), media_type="text/html")
+
+
 @app.get("/api/accounts")
 def api_accounts():
     cfg = load_config()

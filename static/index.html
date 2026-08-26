@@ -275,6 +275,21 @@
     </div>
   </section>
 
+  <section class="card" id="cardInvoices">
+    <h2>invoices <span class="badge" id="invBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">For a customs / myUS declaration. Open
+      an order in the browser (Activity → Purchases → tap an order — the page
+      that shows its tracking) and it appears here. Make a clean Whatnot invoice
+      from it, then Print / Save as PDF.</p>
+    <div class="row" style="margin-bottom:10px; gap:8px">
+      <input type="text" id="invTrack" placeholder="or paste a tracking number"
+        style="flex:1; min-width:150px" spellcheck="false"
+        onkeydown="if(event.key==='Enter')invoiceByTracking()">
+      <button class="sm" onclick="invoiceByTracking()">make invoice</button>
+    </div>
+    <div id="invoices">loading…</div>
+  </section>
+
   <section class="card" id="cardStreamers">
     <h2>recently viewed <span class="badge" id="strBadge">–</span></h2>
     <p class="hint" style="margin-top:0">Streamers whose giveaways you have seen
@@ -464,6 +479,7 @@ async function refresh(){
   loadTabs();
   loadAccounts();
   loadStreamers();
+  loadInvoices();
 }
 
 async function openLink(){
@@ -471,6 +487,31 @@ async function openLink(){
   if(!url) return;
   const j=await post('/api/open-link',{url});
   if(j && !j.error) el.value='';
+}
+
+async function loadInvoices(){
+  let d; try{d=await(await fetch('/api/orders')).json()}catch{return}
+  const el=$('#invoices'); if(!el) return;
+  el.innerHTML='';
+  if(!d.orders.length){ el.innerHTML='<p class="hint">No order open. Open one in the browser — tap an order under Activity → Purchases.</p>'; }
+  d.orders.forEach(o=>{
+    const row=document.createElement('div');
+    row.className='tab-row';
+    row.innerHTML=`<div style="flex:1;min-width:0">
+      <div><b>${esc(o.item||'—')}</b> <span class="hint">${esc(o.total||'')}</span></div>
+      <div class="tab-url">${esc(o.seller||'')}${o.tracking?(' · '+esc(o.tracking)):''}</div></div>`;
+    const btn=document.createElement('button');
+    btn.className='sm'; btn.textContent='invoice';
+    btn.onclick=()=>window.open('/invoice?order_id='+encodeURIComponent(o.order_id),'_blank');
+    row.appendChild(btn); el.appendChild(row);
+  });
+  $('#invBadge').textContent=d.orders.length||'0';
+}
+
+function invoiceByTracking(){
+  const t=($('#invTrack').value||'').trim();
+  if(!t){ toast('paste a tracking number, or use a button above',true); return; }
+  window.open('/invoice?tracking='+encodeURIComponent(t),'_blank');
 }
 
 async function loadStreamers(){
