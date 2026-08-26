@@ -330,8 +330,19 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
   input.val {{ width: 92px; text-align: right; }}
   input.qty {{ width: 60px; text-align: right; }}
   input.org {{ width: 140px; }}
-  @media print {{ body {{ padding: 0; }} .noprint {{ display: none; }}
-                  input.ed {{ border: 0; padding: 0; }} }}
+  @media print {{
+    @page {{ size: A4; margin: 12mm; }}
+    body {{ padding: 0; font-size: 12.5px; }}
+    .noprint {{ display: none; }}
+    .foot {{ display: none; }}         /* app note, not part of the customs doc */
+    input.ed {{ border: 0; padding: 0; }}
+    header {{ margin-bottom: 14px; padding-bottom: 12px; }}
+    h2 {{ margin: 13px 0 5px; }}
+    .box {{ min-height: 0; padding: 9px 11px; }}
+    .items td {{ padding: 7px 8px 7px 0; }}
+    .decl p {{ margin: 4px 0; }}
+    .sign {{ margin-top: 14px; }}
+  }}
 </style></head><body><div class="sheet">
   <header>
     <div class="brand"><div class="mark">w</div><b>whatnot</b></div>
