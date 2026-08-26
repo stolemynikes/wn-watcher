@@ -58,7 +58,8 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "max_live_tabs", "watchdog_stuck_seconds", "close_ended_streams",
             "close_duplicate_tabs", "restart_chrome_on_stuck",
             "foreign_domestic_giveaways", "presence_stale_seconds",
-            "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value"}
+            "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value",
+            "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -346,7 +347,7 @@ def api_orders():
     data. Open an order (it shows the tracking) and it appears here."""
     import invoice
     cfg = load_config()
-    orders = invoice.read_open_orders(int(cfg.get("debug_port", 9222)))
+    orders = invoice.orders(int(cfg.get("debug_port", 9222)))
     return {"orders": [{"order_id": o.get("order_id"), "seller": o.get("seller"),
                         "item": o.get("item"), "tracking": o.get("tracking"),
                         "total": o.get("total_display"), "status": o.get("status"),
@@ -359,7 +360,7 @@ def api_invoice(order_id: str = "", tracking: str = ""):
     number or its tracking number."""
     import invoice
     cfg = load_config()
-    orders = invoice.read_open_orders(int(cfg.get("debug_port", 9222)))
+    orders = invoice.orders(int(cfg.get("debug_port", 9222)))
     want_o, want_t = order_id.strip(), tracking.strip().upper()
     match = None
     for o in orders:

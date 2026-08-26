@@ -96,6 +96,22 @@ def publish_tabs(tabs: list) -> None:
         pass          # a snapshot the panel cannot read is not worth a crash
 
 
+ORDERS_PATH = PROJECT_DIR / "orders.json"
+
+
+def publish_orders(orders: list) -> None:
+    """Parsed Order Details pages, for the panel's invoice tab. The watcher
+    already has Chrome open, so it reads them here — the panel opening its own
+    second connection to do it just times out when Chrome is busy."""
+    try:
+        tmp = ORDERS_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"at": time.time(), "orders": orders},
+                                  ensure_ascii=False), encoding="utf-8")
+        tmp.replace(ORDERS_PATH)
+    except OSError:
+        pass
+
+
 def save_state(state: dict) -> None:
     tmp = STATE_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
@@ -1420,6 +1436,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             snapshot = []
             seen_stream_ids = set()   # dedupe duplicate tabs of one stream
             live_pages = []           # (url, page) of each kept live tab, for the cap
+            orders_seen = []          # parsed Order Details pages, for the invoice tab
 
             for page in pages:
                 try:
@@ -1436,8 +1453,18 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                         check_purchases_api(page, state, notifier)
                     continue
                 if "/live/" not in url:
+                    kind = "other"
+                    if "/order/" in url:
+                        kind = "order"
+                        try:
+                            import invoice
+                            data = page.evaluate(invoice.ORDER_READ_JS)
+                            if isinstance(data, dict) and data.get("ok"):
+                                orders_seen.append(invoice._clean(data))
+                        except Exception:
+                            pass
                     snapshot.append({"url": url, "title": info["title"],
-                                     "kind": "other"})
+                                     "kind": kind})
                     continue
 
                 # A raid, or an accidental second open, leaves two tabs on the
@@ -1644,6 +1671,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     pass
 
             publish_tabs(snapshot)
+            publish_orders(orders_seen)
             prune_state(state)
             save_state(state)
             # Not time.sleep(): that blocks this process's OS thread, which

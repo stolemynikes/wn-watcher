@@ -110,6 +110,31 @@ def _clean(order: dict) -> dict:
     return o
 
 
+def read_published_orders(max_age: float = 20.0) -> list | None:
+    """The order pages the running watcher already parsed and published — no
+    second connection to Chrome. None if that snapshot is missing or stale, so
+    the caller can fall back to reading Chrome directly."""
+    import time
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "orders.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(data.get("at", 0)) > max_age:
+        return None
+    return data.get("orders", [])
+
+
+def orders(port: int) -> list:
+    """Open orders for the panel: the watcher's fresh snapshot if there is one,
+    else read Chrome directly (watcher stopped)."""
+    published = read_published_orders()
+    if published is not None:
+        return published
+    return read_open_orders(port)
+
+
 def read_open_orders(port: int) -> list:
     """Every Whatnot Order Details page open in the browser, parsed. Uses
     Playwright over CDP; any tab that will not read is skipped."""
@@ -176,9 +201,18 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
     giveaway win carries its real worth, not £0."""
     cfg = cfg or {}
     via = "<br>".join(_e(l) for l in o.get("ship_lines", [])) or "—"
-    buyer_name = cfg.get("invoice_buyer_name") or ""
-    buyer_addr = str(cfg.get("invoice_buyer_address") or "")
-    to_lines = [buyer_name] + [l for l in buyer_addr.splitlines() if l.strip()]
+    # Recipient (you) from the structured fields; fall back to the old free-text
+    # address for a config written before the fields were split.
+    street = str(cfg.get("invoice_buyer_street") or "").strip()
+    if street or cfg.get("invoice_buyer_city"):
+        pc_city = " ".join(p for p in [cfg.get("invoice_buyer_postcode"),
+                                       cfg.get("invoice_buyer_city")] if p)
+        to_lines = [cfg.get("invoice_buyer_name"), street, pc_city,
+                    cfg.get("invoice_buyer_country") or "Netherlands"]
+    else:
+        to_lines = [cfg.get("invoice_buyer_name")] + \
+            [l for l in str(cfg.get("invoice_buyer_address") or "").splitlines()
+             if l.strip()]
     to = "<br>".join(_e(l) for l in to_lines if l) or \
         "<span style='color:#c00'>set your name + address in the panel</span>"
 

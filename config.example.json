@@ -49,5 +49,9 @@
   "_comment_invoice": "For the Invoices tab: your name and NL address go on the customs invoice as the recipient (the Whatnot order only has the myUS forwarding address). invoice_giveaway_value is the default declared value for a free/giveaway item (order total 0), which you can still edit per invoice.",
   "invoice_buyer_name": "",
   "invoice_buyer_address": "",
-  "invoice_giveaway_value": 0
+  "invoice_giveaway_value": 0,
+  "invoice_buyer_street": "",
+  "invoice_buyer_postcode": "",
+  "invoice_buyer_city": "",
+  "invoice_buyer_country": "Netherlands"
 }

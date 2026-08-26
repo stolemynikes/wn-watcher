@@ -292,11 +292,18 @@
       <summary class="hint" style="cursor:pointer">your details on the invoice</summary>
       <div style="margin-top:10px">
         <label class="f"><span>Your name (recipient)</span>
-          <input type="text" id="invName" placeholder="e.g. Pepijn Scheer"></label>
-        <label class="f" style="margin-top:8px"><span>Your NL address</span>
-          <textarea id="invAddr" rows="3" placeholder="Street 1&#10;1234 AB City&#10;Netherlands"
-            style="width:100%;font:inherit;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.04);color:inherit"></textarea></label>
-        <label class="f" style="margin-top:8px"><span>Default value for a giveaway item</span>
+          <input type="text" id="invName" placeholder="Pepijn Scheer"></label>
+        <label class="f" style="margin-top:8px"><span>Street + number</span>
+          <input type="text" id="invStreet" placeholder="Voorbeeldstraat 12"></label>
+        <div class="row" style="margin-top:8px; gap:8px">
+          <label class="f" style="flex:1"><span>Postcode</span>
+            <input type="text" id="invPost" placeholder="1234 AB"></label>
+          <label class="f" style="flex:2"><span>City</span>
+            <input type="text" id="invCity" placeholder="Amsterdam"></label>
+        </div>
+        <label class="f" style="margin-top:8px"><span>Country</span>
+          <input type="text" id="invCountry" placeholder="Netherlands"></label>
+        <label class="f" style="margin-top:8px"><span>Default value for a giveaway item (€)</span>
           <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
         <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
           <span class="saved" id="invSaved"></span></div>
@@ -493,8 +500,6 @@ async function refresh(){
   loadTabs();
   loadAccounts();
   loadStreamers();
-  loadInvoices();
-  loadInvoiceDetails();
 }
 
 async function openLink(){
@@ -531,14 +536,19 @@ function invoiceByTracking(){
 
 async function loadInvoiceDetails(){
   let c; try{c=await(await fetch('/api/config')).json()}catch{return}
-  if($('#invName')&&document.activeElement!==$('#invName')) $('#invName').value=c.invoice_buyer_name||'';
-  if($('#invAddr')&&document.activeElement!==$('#invAddr')) $('#invAddr').value=c.invoice_buyer_address||'';
-  if($('#invGivy')&&document.activeElement!==$('#invGivy')) $('#invGivy').value=(c.invoice_giveaway_value??'');
+  const set=(id,v)=>{const el=$(id); if(el) el.value=(v??'');};
+  set('#invName',c.invoice_buyer_name); set('#invStreet',c.invoice_buyer_street);
+  set('#invPost',c.invoice_buyer_postcode); set('#invCity',c.invoice_buyer_city);
+  set('#invCountry',c.invoice_buyer_country||'Netherlands');
+  set('#invGivy',c.invoice_giveaway_value);
 }
 
 async function saveInvoiceDetails(){
   const body={invoice_buyer_name:$('#invName').value,
-              invoice_buyer_address:$('#invAddr').value,
+              invoice_buyer_street:$('#invStreet').value,
+              invoice_buyer_postcode:$('#invPost').value,
+              invoice_buyer_city:$('#invCity').value,
+              invoice_buyer_country:$('#invCountry').value||'Netherlands',
               invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0};
   const j=await post('/api/config',body);
   if(j&&!j.error){ $('#invSaved').textContent='saved'; setTimeout(()=>$('#invSaved').textContent='',1500); }
@@ -836,6 +846,7 @@ async function loadSsh(){
 $('#btnStart').onclick=()=>post('/api/start');
 $('#btnStop').onclick=()=>post('/api/stop');
 refresh(); loadConfig(); loadSelectors(); loadPhone(); loadSsh();
+loadInvoices(); loadInvoiceDetails();   // once — these hold input you type into
 setInterval(refresh,2500);
 setInterval(loadSsh,15000);
 </script>
