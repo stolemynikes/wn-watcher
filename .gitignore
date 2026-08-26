@@ -1,7 +1,7 @@
 config.json
 state.json
 notifications.log
-chrome-profile/
+chrome-profile*/
 .venv/
 __pycache__/
 watcher.log
