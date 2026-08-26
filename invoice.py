@@ -224,14 +224,21 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
     except ValueError:
         qty = 1
 
+    # The price actually paid on Whatnot — £0.00 for a giveaway. Shown so the
+    # invoice states plainly that the goods were won (paid nothing) while the
+    # declared value below is their market worth, the two not being the same.
+    paid = o.get("total_display") or o.get("order_total") or ""
+    tc = o.get("total_cache") or {}
+    is_free = isinstance(tc.get("amount"), (int, float)) and tc["amount"] == 0
+    paid_label = f"{paid}  (giveaway — item won, not purchased)" if is_free else paid
+
     info = "".join(
         f"<tr><td class='k'>{_e(k)}</td><td>{_e(v)}</td></tr>"
         for k, v in [
             ("Order number", o.get("order_id")),
             ("Order date", o.get("order_date")),
             ("Category", o.get("category")),
-            ("Status", o.get("status")),
-            ("Tracking number", o.get("tracking")),
+            ("Amount paid", paid_label),
         ] if v)
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
