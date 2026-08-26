@@ -301,8 +301,12 @@
           <label class="f" style="flex:2"><span>City</span>
             <input type="text" id="invCity" placeholder="Amsterdam"></label>
         </div>
-        <label class="f" style="margin-top:8px"><span>Country</span>
-          <input type="text" id="invCountry" placeholder="Netherlands"></label>
+        <div class="row" style="margin-top:8px; gap:8px">
+          <label class="f" style="flex:1"><span>Province / State <span class="hint">(optional)</span></span>
+            <input type="text" id="invProv" placeholder="e.g. Noord-Holland"></label>
+          <label class="f" style="flex:1"><span>Country</span>
+            <input type="text" id="invCountry" placeholder="Netherlands"></label>
+        </div>
         <label class="f" style="margin-top:8px"><span>Default value for a giveaway item (€)</span>
           <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
         <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
@@ -539,6 +543,7 @@ async function loadInvoiceDetails(){
   const set=(id,v)=>{const el=$(id); if(el) el.value=(v??'');};
   set('#invName',c.invoice_buyer_name); set('#invStreet',c.invoice_buyer_street);
   set('#invPost',c.invoice_buyer_postcode); set('#invCity',c.invoice_buyer_city);
+  set('#invProv',c.invoice_buyer_province);
   set('#invCountry',c.invoice_buyer_country||'Netherlands');
   set('#invGivy',c.invoice_giveaway_value);
 }
@@ -548,6 +553,7 @@ async function saveInvoiceDetails(){
               invoice_buyer_street:$('#invStreet').value,
               invoice_buyer_postcode:$('#invPost').value,
               invoice_buyer_city:$('#invCity').value,
+              invoice_buyer_province:$('#invProv').value,
               invoice_buyer_country:$('#invCountry').value||'Netherlands',
               invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0};
   const j=await post('/api/config',body);

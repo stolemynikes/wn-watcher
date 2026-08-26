@@ -208,6 +208,7 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
         pc_city = " ".join(p for p in [cfg.get("invoice_buyer_postcode"),
                                        cfg.get("invoice_buyer_city")] if p)
         to_lines = [cfg.get("invoice_buyer_name"), street, pc_city,
+                    cfg.get("invoice_buyer_province"),   # optional
                     cfg.get("invoice_buyer_country") or "Netherlands"]
     else:
         to_lines = [cfg.get("invoice_buyer_name")] + \
