@@ -185,6 +185,19 @@ def signature_data_uri() -> str:
         return ""
 
 
+def _logo_data_uri() -> str:
+    """The Whatnot mark as a data: URI so the invoice needs no network. Empty
+    if the asset is missing, and the caller falls back to a plain wordmark."""
+    import base64
+    from pathlib import Path
+    p = Path(__file__).resolve().parent / "static" / "whatnot-logo.png"
+    try:
+        return "data:image/png;base64," + base64.b64encode(
+            p.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+
+
 _SYM = {"GBP": "£", "EUR": "€", "USD": "$"}
 
 
@@ -345,7 +358,7 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
   }}
 </style></head><body><div class="sheet">
   <header>
-    <div class="brand"><div class="mark">w</div><b>whatnot</b></div>
+    <div class="brand">{(f'<img class="mark" src="{_logo_data_uri()}" alt="Whatnot">' if _logo_data_uri() else '<div class="mark">w</div>')}<b>whatnot</b></div>
     <div class="title"><h1>Pro forma invoice</h1><span>For customs purposes only</span></div>
   </header>
 
