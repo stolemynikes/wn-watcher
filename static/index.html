@@ -307,8 +307,17 @@
           <label class="f" style="flex:1"><span>Country</span>
             <input type="text" id="invCountry" placeholder="Netherlands"></label>
         </div>
-        <label class="f" style="margin-top:8px"><span>Default value for a giveaway item (€)</span>
-          <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
+        <div class="row" style="margin-top:8px; gap:8px; align-items:flex-end">
+          <label class="f"><span>Default value for a giveaway item (€)</span>
+            <input type="number" id="invGivy" step="0.01" min="0" style="width:120px"></label>
+          <label class="f"><span>Invoice currency</span>
+            <select id="invCurrency" style="width:260px">
+              <option value="AUTO">Auto — match the order (£ UK, € NL)</option>
+              <option value="GBP">£ GBP</option>
+              <option value="EUR">€ EUR</option>
+              <option value="USD">$ USD</option></select></label>
+        </div>
+        <div class="hint" style="margin-top:4px">Always enter the value in euros. The invoice itself is written in the currency above, converted at that day's ECB rate — Auto follows the order (pounds for a UK stream, euros for a Dutch one).</div>
         <label class="f" style="margin-top:8px"><span>Default country of origin <span class="hint">(optional)</span></span>
           <input type="text" id="invOrigin" placeholder="e.g. Japan"></label>
         <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
@@ -555,6 +564,7 @@ async function loadInvoiceDetails(){
   set('#invCountry',c.invoice_buyer_country||'Netherlands');
   set('#invGivy',c.invoice_giveaway_value);
   set('#invOrigin',c.invoice_default_origin);
+  set('#invCurrency',c.invoice_currency||'AUTO');
   loadSignatureState();
 }
 
@@ -566,7 +576,8 @@ async function saveInvoiceDetails(){
               invoice_buyer_province:$('#invProv').value,
               invoice_buyer_country:$('#invCountry').value||'Netherlands',
               invoice_default_origin:$('#invOrigin').value,
-              invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0};
+              invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0,
+              invoice_currency:$('#invCurrency').value};
   const j=await post('/api/config',body);
   if(j&&!j.error){ $('#invSaved').textContent='saved'; setTimeout(()=>$('#invSaved').textContent='',1500); }
 }

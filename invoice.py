@@ -201,21 +201,37 @@ def _logo_data_uri() -> str:
 _SYM = {"GBP": "£", "EUR": "€", "USD": "$"}
 
 
-def declared_value(o: dict, cfg: dict) -> tuple:
-    """(unit value as a number, currency symbol). A paid order declares its own
-    price; a giveaway (order total 0) declares the configured default, since a
-    free item still has a real worth the customs form wants — never £0."""
-    tc = o.get("total_cache") or {}
-    cents = tc.get("amount")
-    currency = tc.get("currency") or "EUR"
-    sym = _SYM.get(currency, currency + " ")
-    if isinstance(cents, (int, float)) and cents > 0:
-        return round(cents / 100, 2), sym
-    # Giveaway / £0 — the operator's default declared value.
+
+def fetch_eur_rates() -> dict | None:
+    """EUR value of 1 GBP / 1 USD at today's ECB reference rate, so a foreign
+    order can be declared in euros at what it is worth that day. Cached to a
+    file for the day (a print does not re-hit the network). None on failure,
+    and the invoice then just shows the entered currency, unconverted."""
+    import time
+    import urllib.request
+    from pathlib import Path
+    cache = Path(__file__).resolve().parent / "fx_rates.json"
+    today = time.strftime("%Y-%m-%d")
     try:
-        return round(float(cfg.get("invoice_giveaway_value") or 0), 2), sym
-    except (TypeError, ValueError):
-        return 0.0, sym
+        d = json.loads(cache.read_text(encoding="utf-8"))
+        if d.get("fetched") == today:
+            return d
+    except (OSError, ValueError):
+        pass
+    try:
+        req = urllib.request.Request(
+            "https://api.frankfurter.dev/v1/latest?base=EUR&symbols=GBP,USD",
+            headers={"User-Agent": "wn-watcher/1.0"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            data = json.loads(r.read().decode())
+        r = data["rates"]
+        out = {"EUR": 1.0, "GBP": round(1 / r["GBP"], 6),
+               "USD": round(1 / r["USD"], 6),
+               "date": data.get("date", today), "fetched": today}
+        cache.write_text(json.dumps(out), encoding="utf-8")
+        return out
+    except Exception:
+        return None
 
 
 def invoice_html(o: dict, cfg: dict | None = None) -> str:
@@ -241,7 +257,49 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
     to = "<br>".join(_e(l) for l in to_lines if l) or \
         "<span style='color:#c00'>set your name + address in the panel</span>"
 
-    unit, sym = declared_value(o, cfg)
+    # One currency for the whole invoice, picked in the panel: AUTO follows the
+    # order's own currency (pounds for a UK stream, euros for a Dutch one), or
+    # a fixed EUR / GBP / USD. The declared value is always entered in euros in
+    # the panel — a free giveaway has no price of its own — and converted here
+    # at that day's ECB rate, so the invoice reads in a single currency.
+    tc = o.get("total_cache") or {}
+    cents = tc.get("amount")
+    order_cur = (tc.get("currency") or "").upper()
+    if order_cur not in _SYM:
+        order_cur = "EUR"
+    rates = fetch_eur_rates()
+    is_paid = isinstance(cents, (int, float)) and cents > 0
+    # Base value in euros: a paid order's own price brought to euros, else the
+    # configured default value for a giveaway item.
+    if is_paid:
+        amt = round(cents / 100, 2)
+        base_eur = (round(amt * rates[order_cur], 2)
+                    if order_cur != "EUR" and rates and rates.get(order_cur)
+                    else amt)
+    else:
+        try:
+            base_eur = round(float(cfg.get("invoice_giveaway_value") or 0), 2)
+        except (TypeError, ValueError):
+            base_eur = 0.0
+    choice = (cfg.get("invoice_currency") or "AUTO").upper()
+    target = order_cur if choice in ("", "AUTO", "NONE") else choice
+    if target not in _SYM:
+        target = "EUR"
+    # You value goods in euros, so the field you type in stays euros on screen.
+    # The printed invoice is the customs document, and that is issued in the
+    # invoice currency: printing swaps the euro figures for converted ones and
+    # states the total in both, which is what the declaration is read against.
+    conv_note = entry_hint = ""
+    if target == "EUR" or not (rates and rates.get(target)):
+        target, per_eur = "EUR", 0
+    else:
+        per_eur = round(1 / rates[target], 6)          # target units per 1 EUR
+        conv_note = (f"Values converted from euros at that day's ECB rate "
+                     f"({rates['date']}): 1 EUR = {per_eur:.4f} {target}.")
+        entry_hint = (f"You type euros. Printing / saving as PDF issues the "
+                      f"invoice in {target} at that day's ECB rate — the total "
+                      f"is stated in both.")
+    sym = _SYM[target]
     qty = 1
     try:
         qty = max(1, int(re.sub(r"\D", "", str(o.get("quantity") or "1")) or 1))
@@ -317,19 +375,21 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
         color: #999; }}
   h2 {{ font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
         color: #888; margin: 22px 0 8px; }}
-  table {{ width: 100%; border-collapse: collapse; }}
+  table {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
   td, th {{ padding: 6px 0; vertical-align: top; text-align: left; }}
   .info td.k {{ color: #666; width: 40%; }}
   .items th {{ font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-               color: #888; border-bottom: 1px solid #eee; padding: 0 8px 8px 0; }}
-  .items td {{ border-bottom: 1px solid #f2f2f2; padding: 10px 8px 10px 0; }}
+               color: #888; border-bottom: 1px solid #eee; padding: 0 10px 9px 0; }}
+  .items td {{ border-bottom: 1px solid #f2f2f2; padding: 14px 10px 14px 0; }}
   .num {{ text-align: right; white-space: nowrap; }}
+  .items th:last-child, .items td:last-child {{ padding-left: 14px; }}
   .cols {{ display: flex; gap: 24px; flex-wrap: wrap; }}
   .cols > div {{ flex: 1; min-width: 210px; }}
   .box {{ background: #fafafa; border: 1px solid #eee; border-radius: 10px;
           padding: 12px 14px; min-height: 96px; font-size: 13px; }}
   .box .l {{ color: #888; }}
-  .grand td {{ font-weight: 700; border-top: 2px solid #111; padding-top: 10px; }}
+  .grand td {{ font-weight: 700; border-top: 2px solid #111;
+                padding-top: 13px; padding-bottom: 4px; }}
   .decl {{ font-size: 12.5px; color: #333; }}
   .decl p {{ margin: 6px 0; }}
   .sign {{ margin-top: 22px; display: flex; gap: 40px; flex-wrap: wrap;
@@ -340,19 +400,26 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
            border-top: 1px solid #eee; padding-top: 10px; }}
   input.ed {{ font: inherit; padding: 3px 6px; border: 1px solid #ccc;
               border-radius: 6px; }}
-  input.val {{ width: 92px; text-align: right; }}
-  input.qty {{ width: 60px; text-align: right; }}
-  input.org {{ width: 140px; }}
+  input.val {{ width: 62px; text-align: left; padding-left: 2px; }}
+  .sym {{ color: inherit; margin-right: 1px; }}
+  .prt {{ display: none; }}
+  .hint {{ color: #999; font-style: italic; }}
+  .fxnote {{ text-align: right; color: #666; font-size: 11.5px; margin: 7px 2px 0; }}
+  input.qty {{ width: 52px; text-align: right; }}
+  input.org {{ width: 100%; min-width: 0; }}
+  input.cond {{ width: 100%; }}
   @media print {{
     @page {{ size: A4; margin: 12mm; }}
     body {{ padding: 0; font-size: 12.5px; }}
     .noprint {{ display: none; }}
     .foot {{ display: none; }}         /* app note, not part of the customs doc */
     input.ed {{ border: 0; padding: 0; }}
+    .scr {{ display: none; }}
+    .prt {{ display: inline; }}
     header {{ margin-bottom: 14px; padding-bottom: 12px; }}
     h2 {{ margin: 13px 0 5px; }}
     .box {{ min-height: 0; padding: 9px 11px; }}
-    .items td {{ padding: 7px 8px 7px 0; }}
+    .items td {{ padding: 11px 10px 11px 0; }}
     .decl p {{ margin: 4px 0; }}
     .sign {{ margin-top: 14px; }}
   }}
@@ -375,23 +442,30 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
 
   <h2>Description of goods</h2>
   <table class="items">
+    <colgroup><col style="width:33%"><col style="width:14%"><col style="width:6%">
+      <col style="width:12%"><col style="width:12%"><col style="width:23%"></colgroup>
     <tr><th>Description</th><th>Condition</th><th class="num">Qty</th>
         <th class="num">Unit value</th><th class="num">Total value</th>
         <th>Country of origin</th></tr>
     <tr>
       <td>{_e(o.get('item'))}</td>
-      <td><input class="ed" id="cond" value="{condition}"></td>
+      <td><input class="ed cond" id="cond" value="{condition}"></td>
       <td class="num"><input class="ed qty" id="qty" type="number" min="1"
           value="{qty}" oninput="recalc()"></td>
-      <td class="num">€<input class="ed val" id="unit" type="number" step="0.01"
-          min="0" value="{unit:.2f}" oninput="recalc()"></td>
-      <td class="num" id="line">—</td>
+      <td class="num"><span class="scr"><span class="sym">€</span><input
+          class="ed val" id="unit" type="number" step="0.01" min="0"
+          value="{base_eur:.2f}" oninput="recalc()"></span><span class="prt"
+          id="unitPrint">—</span></td>
+      <td class="num"><span class="scr" id="line">—</span><span class="prt"
+          id="linePrint">—</span></td>
       <td><input class="ed org" id="org" value="{default_country}"
           placeholder="if known"></td>
     </tr>
     <tr class="grand"><td colspan="4">Total declared value</td>
         <td class="num" id="grand">—</td><td></td></tr>
   </table>
+  <div class="fxnote">{_e(conv_note)}</div>
+  <div class="fxnote noprint hint">{_e(entry_hint)}</div>
 
   <h2>Customs declaration / additional information</h2>
   <div class="decl">{giveaway_note}
@@ -415,12 +489,26 @@ def invoice_html(o: dict, cfg: dict | None = None) -> str:
       Print / Save as PDF</button></p>
 </div>
 <script>
+  const SYM = '{sym}';          // invoice currency, used on the printed sheet
+  const PER_EUR = {per_eur};   // invoice-currency units per 1 EUR, 0 = euros
+  const set = (id, t) => {{ document.getElementById(id).textContent = t; }};
   function recalc() {{
     const u = parseFloat(document.getElementById('unit').value || '0') || 0;
     const q = parseInt(document.getElementById('qty').value || '1') || 1;
-    const t = '€' + (u * q).toFixed(2);
-    document.getElementById('line').textContent = t;
-    document.getElementById('grand').textContent = t;
+    const eur = u * q;
+    set('line', '€' + eur.toFixed(2));
+    if (!PER_EUR) {{
+      set('unitPrint', '€' + u.toFixed(2));
+      set('linePrint', '€' + eur.toFixed(2));
+      set('grand', '€' + eur.toFixed(2));
+      return;
+    }}
+    // Round the unit first, then multiply, so the printed column adds up.
+    const unitT = Math.round(u * PER_EUR * 100) / 100;
+    const totT = unitT * q;
+    set('unitPrint', SYM + unitT.toFixed(2));
+    set('linePrint', SYM + totT.toFixed(2));
+    set('grand', SYM + totT.toFixed(2) + ' / €' + eur.toFixed(2));
   }}
   recalc();
 </script>
