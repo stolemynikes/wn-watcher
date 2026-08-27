@@ -72,7 +72,7 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> None:
-    tmp = CONFIG_PATH.with_suffix(".json.tmp")
+    tmp = CONFIG_PATH.with_name(f"config.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(CONFIG_PATH)
 
@@ -573,7 +573,7 @@ def api_save_selector(req: SelectorReq):
     if req.section not in data or not isinstance(data[req.section], dict):
         raise HTTPException(400, "unknown section")
     data[req.section][req.name] = req.pattern
-    tmp = SELECTORS_PATH.with_suffix(".json.tmp")
+    tmp = SELECTORS_PATH.with_name(f"selectors.json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(SELECTORS_PATH)
     return {"message": f"saved {req.section}.{req.name}",

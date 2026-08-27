@@ -37,6 +37,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import sys
 import threading
 import time
@@ -48,6 +49,35 @@ import notify
 
 PROJECT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_DIR / "config.json"
+
+# Set the moment a stop is asked for, by Ctrl+C or by a signal. Everything that
+# would otherwise fight the shutdown — above all the watchdog, which re-execs a
+# frozen loop — checks this first. Without it, Ctrl+C could leave the terminal
+# stuck: the interrupt lands, the tidy-up runs a little long, and the watchdog
+# reads that quiet as a freeze and restarts the very process you just stopped.
+STOPPING = threading.Event()
+
+
+def install_stop_handlers() -> None:
+    """Make an asked-for stop behave like Ctrl+C on every platform.
+
+    Ctrl+C already raises KeyboardInterrupt, so the poll loop unwinds through
+    its finally and saves state. A signal did not: `control.py stop` sends
+    SIGTERM (CTRL_BREAK on Windows), whose default action kills the process
+    outright — state unsaved, tabs' last reading lost. These handlers turn both
+    into the same orderly path, and raising from the handler interrupts a
+    sleeping loop straight away rather than at the end of the poll.
+    """
+    def stop(signum, _frame):
+        STOPPING.set()
+        raise KeyboardInterrupt
+
+    for name in ("SIGTERM", "SIGBREAK"):     # SIGBREAK is Windows-only
+        if (sig := getattr(signal, name, None)) is not None:
+            try:
+                signal.signal(sig, stop)
+            except (OSError, ValueError):
+                pass                          # not the main thread, or no TTY
 SELECTORS_PATH = PROJECT_DIR / "selectors.json"
 STATE_PATH = PROJECT_DIR / "state.json"
 # What the watcher can see, published for the panel. Without this the panel
@@ -84,14 +114,32 @@ def prune_state(state: dict) -> None:
         del recent[url]
 
 
+def _atomic_write(path, text: str) -> None:
+    """Write via a temp file named after this process, then rename into place.
+
+    The temp name carries the pid because the name is shared otherwise: two
+    watchers running at once — a stray second start, or a restart overlapping
+    the old one — each write `state.json.tmp` and each rename it, and whoever
+    renames second finds the file already gone and dies with FileNotFoundError.
+    The rename itself is atomic, so a reader never sees half a file either way.
+    """
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def publish_tabs(tabs: list) -> None:
     """Hand the panel a snapshot instead of making it attach for itself."""
     try:
-        tmp = TABS_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"at": time.time(), "browser": True,
-                                   "tabs": tabs}, ensure_ascii=False),
-                       encoding="utf-8")
-        tmp.replace(TABS_PATH)
+        _atomic_write(TABS_PATH, json.dumps({"at": time.time(), "browser": True,
+                                             "tabs": tabs}, ensure_ascii=False))
     except OSError:
         pass          # a snapshot the panel cannot read is not worth a crash
 
@@ -104,18 +152,15 @@ def publish_orders(orders: list) -> None:
     already has Chrome open, so it reads them here — the panel opening its own
     second connection to do it just times out when Chrome is busy."""
     try:
-        tmp = ORDERS_PATH.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"at": time.time(), "orders": orders},
-                                  ensure_ascii=False), encoding="utf-8")
-        tmp.replace(ORDERS_PATH)
+        _atomic_write(ORDERS_PATH, json.dumps({"at": time.time(),
+                                               "orders": orders},
+                                              ensure_ascii=False))
     except OSError:
         pass
 
 
 def save_state(state: dict) -> None:
-    tmp = STATE_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    tmp.replace(STATE_PATH)
+    _atomic_write(STATE_PATH, json.dumps(state, indent=2))
 
 
 # --- reading a page ---------------------------------------------------------
@@ -1308,6 +1353,7 @@ def foreign_domestic(reading: dict) -> str:
 
 
 def cmd_watch(cfg: dict, sel: dict) -> None:
+    install_stop_handlers()
     if not chrome.ensure_running(cfg):
         sys.exit("Could not get a browser up. Nothing was changed.")
     notifier = notify.make_notifier(cfg)
@@ -1381,10 +1427,9 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     stuck_after = max(60, int(cfg.get("watchdog_stuck_seconds", 120)))
 
     def _watchdog():
-        while True:
-            time.sleep(20)
+        while not STOPPING.wait(5):
             frozen = time.monotonic() - heartbeat[0]
-            if frozen > stuck_after:
+            if frozen > stuck_after and not STOPPING.is_set():
                 log(f"poll loop frozen for {int(frozen)}s — auto-restarting "
                     f"the watcher")
                 try:
@@ -1687,8 +1732,9 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             else:
                 time.sleep(poll)
     except KeyboardInterrupt:
-        pass
+        STOPPING.set()
     finally:
+        STOPPING.set()
         log("stopping — your tabs are untouched.")
         try:
             save_state(state)

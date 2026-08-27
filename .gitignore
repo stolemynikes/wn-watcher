@@ -12,3 +12,4 @@ debug-entrants.json
 orders.json
 signature.b64
 fx_rates.json
+*.tmp
