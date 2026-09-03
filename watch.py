@@ -135,11 +135,12 @@ def _atomic_write(path, text: str) -> None:
         raise
 
 
-def publish_tabs(tabs: list) -> None:
+def publish_tabs(tabs: list, windows: int | None = None) -> None:
     """Hand the panel a snapshot instead of making it attach for itself."""
     try:
         _atomic_write(TABS_PATH, json.dumps({"at": time.time(), "browser": True,
-                                             "tabs": tabs}, ensure_ascii=False))
+                                             "windows": windows, "tabs": tabs},
+                                            ensure_ascii=False))
     except OSError:
         pass          # a snapshot the panel cannot read is not worth a crash
 
@@ -590,6 +591,21 @@ def chrome_has_live_tabs(port: int) -> bool:
                 and "whatnot.com" in (target.get("url") or "")):
             return True
     return False
+
+
+def count_open_pages(browser) -> int | None:
+    """How many tabs the browser has in total, Whatnot or not. None if it has
+    gone away.
+
+    Closing the last window on macOS does not quit Chrome: the process stays
+    alive with its menu bar, so the debug port keeps answering and every check
+    built on "is the port open" still reports a healthy browser. From the
+    outside it looks shut. Counting the pages is what tells the two apart.
+    """
+    try:
+        return sum(len(ctx.pages) for ctx in browser.contexts)
+    except Exception:
+        return None
 
 
 def whatnot_pages(browser):
@@ -1692,9 +1708,15 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                         pass
                 presence_lost.discard(gone)
 
+            open_pages = count_open_pages(browser)
             if not pages and not warned_no_tabs:
                 warned_no_tabs = True
-                log("no Whatnot tabs open — waiting")
+                if open_pages == 0:
+                    log("the browser has no windows open — Chrome is still "
+                        "running but every window is closed, so there is "
+                        "nothing to read. Open one from the panel.")
+                else:
+                    log("no Whatnot tabs open — waiting")
             elif pages:
                 warned_no_tabs = False
 
@@ -1715,7 +1737,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 except Exception:
                     pass
 
-            publish_tabs(snapshot)
+            publish_tabs(snapshot, open_pages)
             publish_orders(orders_seen)
             prune_state(state)
             save_state(state)

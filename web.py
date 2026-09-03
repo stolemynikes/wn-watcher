@@ -146,16 +146,18 @@ def attached_tabs(cfg: dict) -> dict:
     Attaching directly is now only for when the watcher is stopped.
     """
     if (snapshot := published_tabs()) is not None:
-        return {"browser": True, "tabs": snapshot.get("tabs", [])}
+        return {"browser": True, "windows": snapshot.get("windows"),
+                "tabs": snapshot.get("tabs", [])}
     port = int(cfg.get("debug_port", 9222))
     if not chrome.port_open(port):
-        return {"browser": False, "tabs": []}
+        return {"browser": False, "windows": 0, "tabs": []}
     try:
         pw, browser = watch.attach(port)
     except SystemExit:
-        return {"browser": False, "tabs": []}
+        return {"browser": False, "windows": 0, "tabs": []}
     sel = json.loads(SELECTORS_PATH.read_text(encoding="utf-8"))
     tabs = []
+    windows = watch.count_open_pages(browser)
     try:
         for page in watch.whatnot_pages(browser):
             try:
@@ -176,7 +178,7 @@ def attached_tabs(cfg: dict) -> dict:
         except Exception:
             pass
         pw.stop()
-    return {"browser": True, "tabs": tabs}
+    return {"browser": True, "windows": windows, "tabs": tabs}
 
 
 @app.get("/")

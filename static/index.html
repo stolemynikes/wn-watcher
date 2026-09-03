@@ -647,10 +647,14 @@ async function loadAccounts(){
 async function loadTabs(){
   let t; try{t=await(await fetch('/api/tabs')).json()}catch{return}
   const live=t.tabs.filter(x=>x.kind==='live');
-  $('#tabBadge').textContent=t.browser?`${live.length} stream${live.length===1?'':'s'}`:'no browser';
+  $('#tabBadge').textContent=!t.browser?'no browser':(t.windows===0?'no windows':`${live.length} stream${live.length===1?'':'s'}`);
   $('#tabBadge').className='badge '+(live.length?'ok':'todo');
   setCard('#cardTabs','#tabBadge',live.length>0);
   if(!t.browser){$('#tabs').innerHTML='<p class="empty">the browser is not running</p>';return}
+  // Chrome alive with every window closed still answers the debug port, so it
+  // reads as running while there is visibly no browser. Say which it is.
+  if(t.windows===0){$('#tabs').innerHTML='<p class="empty">the browser is running but has no windows open — '
+    +'<a href="#" onclick="post(\'/api/browser/start\');return false">open one</a></p>';return}
   if(!t.tabs.length){$('#tabs').innerHTML='<p class="empty">no Whatnot tabs open — open a stream in that browser</p>';return}
   $('#tabs').innerHTML=t.tabs.map(x=>{
     let pill='<span class="pill">page</span>';
