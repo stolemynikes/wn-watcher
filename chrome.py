@@ -199,6 +199,38 @@ def verify(port: int) -> list:
     return problems
 
 
+def radar_chromes(port: int) -> list:
+    """Every Chrome this project launched on the debug port, as
+    (pid, profile_dir). Normally one; more than one is the fault this exists
+    to expose.
+
+    Identity here is the profile, not the port. Two Chromes can each hold
+    "port 9222" without conflicting — one binds 127.0.0.1, the other [::1] —
+    and then port_open() answers about whichever took IPv4 while a link opened
+    by profile lands in the other. The watcher reads one browser, your tabs
+    open in the other, and both look healthy.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return []
+    out = []
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        argv = proc.info.get("cmdline") or []
+        line = " ".join(argv)
+        if f"--remote-debugging-port={port}" not in line:
+            continue
+        if "--type=" in line:            # renderer/gpu helper, not the browser
+            continue
+        for arg in argv:
+            if arg.startswith("--user-data-dir="):
+                profile = Path(arg.split("=", 1)[1])
+                if PROJECT_DIR in profile.parents or profile == PROJECT_DIR:
+                    out.append((proc.info["pid"], profile))
+                break
+    return out
+
+
 def ensure_running(cfg: dict) -> bool:
     """Start the browser unless it is already up. Returns True if usable.
 
@@ -206,10 +238,28 @@ def ensure_running(cfg: dict) -> bool:
     alone, so restarting the watcher never disturbs the tabs you have open.
     """
     port = int(cfg.get("debug_port", 9222))
+    wanted = profile_dir_for(cfg)
 
     if port_open(port):
-        print(f"  Chrome already running on port {port} — leaving it alone.")
-        return True
+        running = radar_chromes(port)
+        # Leaving it alone is only right when it is the browser we mean. A
+        # leftover from another account answers the port just as readily, and
+        # then the watcher reads that one while every link opens in the
+        # account's own profile — each half working, the pair useless.
+        if len(running) == 1 and running[0][1] == wanted:
+            print(f"  Chrome already running on port {port} — leaving it alone.")
+            return True
+        if running:
+            others = ", ".join(sorted({p.name for _, p in running
+                                       if p != wanted}))
+            print(f"  Chrome on port {port} is running the wrong profile"
+                  f"{f' ({others})' if others else ''} — restarting it on "
+                  f"{wanted.name}.")
+        else:
+            print(f"  Something else is on port {port} — not ours; "
+                  f"starting {wanted.name} would collide.")
+            return False
+        stop_chrome(cfg)
 
     chrome = find_chrome()
     if not chrome:
@@ -217,7 +267,7 @@ def ensure_running(cfg: dict) -> bool:
               "or add its path to chrome_candidates() in chrome.py.")
         return False
 
-    profile = profile_dir_for(cfg)
+    profile = wanted
     profile.mkdir(parents=True, exist_ok=True)
     print(f"\n  Starting Chrome on port {port}")
     print(f"  Account: {active_account(cfg).get('label', '?')}  Profile: {profile}")
@@ -262,52 +312,42 @@ def stop_chrome(cfg: dict) -> str:
         import psutil
     except ImportError:
         return "psutil not installed — cannot stop Chrome"
-    port = str(int(cfg.get("debug_port", 9222)))
-    killed = 0
-    for proc in psutil.process_iter(["cmdline"]):
-        argv = proc.info.get("cmdline") or []
-        line = " ".join(argv)
-        if ("Google Chrome" not in line and "chrome" not in line.lower()):
-            continue
-        if f"--remote-debugging-port={port}" not in line:
-            continue
-        if str(PROJECT_DIR) not in line:      # only our project's profiles
-            continue
-        if "--type=" in line:                 # a renderer/gpu helper, not the
-            continue                           # main process — killing that is
-                                               # enough, its tree goes with it
+    port = int(cfg.get("debug_port", 9222))
+    targets = []
+    for pid, _profile in radar_chromes(port):
         try:
-            for child in proc.children(recursive=True):
-                child.terminate()
-            proc.terminate()
-            killed += 1
+            targets.append(psutil.Process(pid))
         except psutil.Error:
             pass
-    if not killed:
+    if not targets:
         return "no radar Chrome was running"
-    # SIGTERM is polite but slow — Chrome can hold the debug port for seconds
-    # after it, and a switch that relaunches on a still-open port silently
-    # no-ops (ensure_running sees "already running" and skips the new
-    # profile). So wait for the port to actually free, and escalate to a hard
-    # kill if it will not. The port being closed is the real done signal.
-    for _ in range(12):
-        if not port_open(port):
-            return f"stopped Chrome ({killed} tree{'s' if killed != 1 else ''})"
-        time.sleep(0.5)
-    for proc in psutil.process_iter(["cmdline"]):
-        line = " ".join(proc.info.get("cmdline") or [])
-        if (f"--remote-debugging-port={port}" in line
-                and str(PROJECT_DIR) in line):
-            try:
-                proc.kill()
-            except psutil.Error:
-                pass
-    for _ in range(6):
-        if not port_open(port):
-            break
-        time.sleep(0.5)
-    return (f"stopped Chrome ({killed} tree, forced)" if not port_open(port)
-            else "WARNING: Chrome would not release the debug port")
+    killed = len(targets)
+    doomed = list(targets)
+    for proc in targets:
+        try:
+            children = proc.children(recursive=True)
+            doomed.extend(children)
+            for child in children:
+                child.terminate()
+            proc.terminate()
+        except psutil.Error:
+            pass
+    # SIGTERM is polite but slow, and Chrome does not always take it. Wait on
+    # the processes themselves: the port going quiet is not the done signal it
+    # looks like — Chrome closes the listening socket early in its shutdown and
+    # can then abandon the quit, leaving the browser alive and the next launch
+    # racing it for the port. That race is what puts two profiles on one port.
+    _gone, alive = psutil.wait_procs(doomed, timeout=6)
+    if not alive:
+        return f"stopped Chrome ({killed} tree{'s' if killed != 1 else ''})"
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.Error:
+            pass
+    _gone, alive = psutil.wait_procs(alive, timeout=5)
+    return (f"stopped Chrome ({killed} tree, forced)" if not alive
+            else f"WARNING: {len(alive)} Chrome processes would not quit")
 
 
 def open_visible(cfg: dict, url: str) -> bool:
