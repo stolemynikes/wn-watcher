@@ -1408,6 +1408,8 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     pw, browser = attach_resilient(debug_port, notifier, cfg)
     trackers, challenged, warned_tabs = {}, set(), set()
     last_reconnect = 0.0   # throttle: at most one stale-connection reconnect / 15s
+    stale_rounds = 0       # consecutive stale reconnects that did not help
+    last_stale_restart = 0.0
     challenge_wording = set()  # tabs where the wording appeared but the page was fine
     expanded = set()          # tabs whose banner we have already asked to open
     won_here = set()          # tabs whose draw overlay we have already alerted on
@@ -1475,8 +1477,28 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
             if (not pages and time.monotonic() - last_reconnect > 15
                     and chrome_has_live_tabs(debug_port)):
                 last_reconnect = time.monotonic()
+                stale_rounds += 1
                 log("connection went stale (Chrome has tabs, we saw none) — "
                     "reconnecting")
+                # Reconnecting fixes a stale CDP session. It cannot fix Chrome
+                # itself, and Chrome can wedge while its debug port still
+                # answers happily — attach_resilient's restart never fires,
+                # because nothing looks broken from there. Seen for real: the
+                # browser kept listing tabs and kept taking handed-off URLs
+                # without opening any of them, and the watcher reconnected on a
+                # loop for days. Reconnecting several times in a row without
+                # ever seeing a page again is the tell.
+                if (stale_rounds >= 3
+                        and bool(cfg.get("restart_chrome_on_stuck", False))
+                        and time.monotonic() - last_stale_restart > 180):
+                    log("reconnecting is not helping — restarting Chrome")
+                    last_stale_restart = time.monotonic()
+                    stale_rounds = 0
+                    try:
+                        chrome.stop_chrome(cfg)
+                        chrome.ensure_running(cfg)
+                    except Exception as exc:
+                        log(f"Chrome restart failed ({exc.__class__.__name__})")
                 try:
                     browser.close()
                 except Exception:
@@ -1719,6 +1741,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     log("no Whatnot tabs open — waiting")
             elif pages:
                 warned_no_tabs = False
+                stale_rounds = 0
 
             # The silent failure of this design is Whatnot changing their
             # markup: everything keeps running and nothing is ever detected.

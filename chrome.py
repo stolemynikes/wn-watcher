@@ -350,6 +350,18 @@ def stop_chrome(cfg: dict) -> str:
             else f"WARNING: {len(alive)} Chrome processes would not quit")
 
 
+def _open_targets(port: int) -> set | None:
+    """Ids of the pages Chrome currently has open, or None if it will not say."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/json/list", timeout=2) as resp:
+            return {t.get("id") for t in json.load(resp)
+                    if t.get("type") == "page"}
+    except Exception:
+        return None
+
+
 def open_visible(cfg: dict, url: str) -> bool:
     """Open a URL as a real, visible tab in the radar's Chrome — not a
     background CDP target (which has no window you can click). Relaunching the
@@ -358,16 +370,32 @@ def open_visible(cfg: dict, url: str) -> bool:
 
     Used to drop the user onto a streamer's profile (where their live shows are
     one tap away) or a fresh search tab, in the account's own profile.
+
+    True means a tab actually appeared, not merely that the command started.
+    Launching only hands the URL to whichever process holds the profile lock,
+    which prints "Opening in existing browser session" and exits 0 whether or
+    not that process goes on to do anything with it. A wedged Chrome swallows
+    it silently, and reporting that as success sent "opened" to a phone while
+    nothing opened — the failure looked like a delivery problem for weeks.
     """
     exe = find_chrome()
     if not exe:
         return False
+    port = int(cfg.get("debug_port", 9222))
+    before = _open_targets(port)
     try:
         subprocess.Popen([exe, f"--user-data-dir={profile_dir_for(cfg)}", url],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True
     except OSError:
         return False
+    if before is None:
+        return True        # nothing to compare against; do not claim a failure
+    for _ in range(16):    # ~8s: a share link redirects before it settles
+        time.sleep(0.5)
+        now = _open_targets(port)
+        if now is not None and now - before:
+            return True
+    return False
 
 
 def list_whatnot_tabs(cfg: dict) -> list:

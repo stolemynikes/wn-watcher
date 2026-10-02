@@ -318,9 +318,15 @@ def api_open_link(req: OpenLinkReq):
     cfg = load_config()
     if not chrome.port_open(int(cfg.get("debug_port", 9222))):
         raise HTTPException(400, "browser is not running")
-    ok = chrome.open_visible(cfg, url)
-    return {"message": "opened — the watcher will pick it up in a second"
-            if ok else "could not open the link"}
+    if not chrome.open_visible(cfg, url):
+        # 502, not a 200 carrying bad news: this is answered by a phone
+        # shortcut, which shows an error for a failing status and nothing at
+        # all for a successful one. A wedged browser took the link and opened
+        # nothing, and "opened" came back either way.
+        raise HTTPException(502, "the browser took the link but opened "
+                                 "nothing — it looks wedged; restart it from "
+                                 "the panel and try again")
+    return {"message": "opened — the watcher will pick it up in a second"}
 
 
 class OpenStreamerReq(BaseModel):
@@ -338,9 +344,11 @@ def api_streamers_open(req: OpenStreamerReq):
     # The profile page, not a stale stream URL: it shows whether they are live
     # right now, with the live show one tap away, and never 404s the way an
     # ended stream link would.
-    ok = chrome.open_visible(cfg, f"https://www.whatnot.com/user/{name}")
-    return {"message": f"opened {name}'s profile — their live show is at the top"
-            if ok else "could not open the profile"}
+    if not chrome.open_visible(cfg, f"https://www.whatnot.com/user/{name}"):
+        raise HTTPException(502, "the browser took the link but opened "
+                                 "nothing — it looks wedged; restart it from "
+                                 "the panel and try again")
+    return {"message": f"opened {name}'s profile — their live show is at the top"}
 
 
 @app.get("/api/orders")
