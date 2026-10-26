@@ -416,7 +416,13 @@ def _sheet(o: dict, cfg: dict, rates: dict | None) -> str:
     the two numbers it needs — the invoice currency and that day's rate — ride
     along as data attributes, so a document can hold any number of these.
     """
-    via = "<br>".join(_e(l) for l in o.get("ship_lines", [])) or "—"
+    # The order page carries the forwarder's address, but only the part
+    # Whatnot was given — the hub's name and street can be missing from it.
+    # A forwarding address set in the panel is the same for every parcel and
+    # wins over what the page says.
+    fixed = [l for l in str(cfg.get("invoice_via_address") or "").splitlines()
+             if l.strip()]
+    via = "<br>".join(_e(l) for l in (fixed or o.get("ship_lines", []))) or "—"
     # Recipient (you) from the structured fields; fall back to the old free-text
     # address for a config written before the fields were split.
     street = str(cfg.get("invoice_buyer_street") or "").strip()

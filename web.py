@@ -59,7 +59,7 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "close_duplicate_tabs", "restart_chrome_on_stuck",
             "foreign_domestic_giveaways", "presence_stale_seconds",
             "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value",
-            "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency"}
+            "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency", "invoice_via_address"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}

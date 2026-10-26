@@ -130,13 +130,14 @@
 
   label.f{display:flex; flex-direction:column; gap:6px; font-size:11px;
           letter-spacing:.08em; text-transform:uppercase; color:var(--muted)}
-  input,select{min-height:42px; border-radius:11px; padding:0 12px; font-size:16px;
+  input,select,textarea{min-height:42px; border-radius:11px; padding:0 12px; font-size:16px;
         font-family:var(--mono); color:var(--ink);
         background:rgba(0,0,0,.32); border:1px solid var(--hair);
         transition:border-color var(--t), box-shadow var(--t)}
-  input:focus,select:focus{outline:none; border-color:rgba(94,106,210,.7);
+  textarea{padding:10px 12px; line-height:1.45; resize:vertical}
+  input:focus,select:focus,textarea:focus{outline:none; border-color:rgba(94,106,210,.7);
         box-shadow:0 0 0 3px rgba(94,106,210,.16)}
-  input::placeholder{color:#5b616e}
+  input::placeholder,textarea::placeholder{color:#5b616e}
 
   /* country / option chips — replaces the native multi-select */
   .chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:8px}
@@ -337,6 +338,10 @@
         <div class="hint" style="margin-top:4px">Always enter the value in euros. The invoice itself is written in the currency above, converted at that day's ECB rate — Auto follows the order (pounds for a UK stream, euros for a Dutch one).</div>
         <label class="f" style="margin-top:8px"><span>Default country of origin <span class="hint">(optional)</span></span>
           <input type="text" id="invOrigin" placeholder="e.g. Japan"></label>
+        <label class="f" style="margin-top:8px"><span>Forwarding address <span class="hint">(optional — overrides the one on the order page)</span></span>
+          <textarea id="invVia" rows="5" spellcheck="false"
+            placeholder="Pepijn Scheer I002804&#10;Send2Hub, Unit 4 Tunstall Trade Park,&#10;Brownhills Road&#10;Stoke on Trent&#10;ST6 4SE&#10;United Kingdom"></textarea></label>
+        <div class="hint" style="margin-top:4px">Whatnot only knows the part of the hub's address it was given, so the invoice can miss the company name or the street. One address per line.</div>
         <div class="row" style="margin-top:10px"><button class="sm" onclick="saveInvoiceDetails()">save</button>
           <span class="saved" id="invSaved"></span></div>
         <div class="row" style="margin-top:12px; gap:8px; align-items:center">
@@ -608,6 +613,7 @@ async function loadInvoiceDetails(){
   set('#invCountry',c.invoice_buyer_country||'Netherlands');
   set('#invGivy',c.invoice_giveaway_value);
   set('#invOrigin',c.invoice_default_origin);
+  set('#invVia',c.invoice_via_address);
   set('#invCurrency',c.invoice_currency||'AUTO');
   loadSignatureState();
 }
@@ -620,6 +626,7 @@ async function saveInvoiceDetails(){
               invoice_buyer_province:$('#invProv').value,
               invoice_buyer_country:$('#invCountry').value||'Netherlands',
               invoice_default_origin:$('#invOrigin').value,
+              invoice_via_address:$('#invVia').value,
               invoice_giveaway_value:parseFloat($('#invGivy').value||'0')||0,
               invoice_currency:$('#invCurrency').value};
   const j=await post('/api/config',body);
