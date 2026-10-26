@@ -13,3 +13,4 @@ orders.json
 signature.b64
 fx_rates.json
 *.tmp
+panel.log
