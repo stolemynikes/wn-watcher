@@ -288,6 +288,23 @@
       <button class="sm" onclick="invoiceByTracking()">make invoice</button>
     </div>
     <div id="invoices">loading…</div>
+    <details style="margin-top:12px" id="invRangeBox">
+      <summary class="hint" style="cursor:pointer">a batch from your purchase history (nothing to open)</summary>
+      <p class="hint" style="margin-top:8px">Numbered newest first — 1 is your
+        latest order. Both ends included, one invoice per sheet of paper, and
+        the value you type once is applied to all of them.</p>
+      <div class="row" style="gap:8px; align-items:flex-end">
+        <label class="f" style="width:90px"><span>from</span>
+          <input type="number" id="invFrom" min="1" value="1"></label>
+        <label class="f" style="width:90px"><span>to</span>
+          <input type="number" id="invTo" min="1" value="5"></label>
+        <button class="sm" onclick="invoiceRange()">make invoices</button>
+        <button class="sm" onclick="loadPurchases()">show history</button>
+      </div>
+      <div class="hint" style="margin-top:8px">Each order is opened once in the
+        background, so a long range takes a few seconds per order.</div>
+      <div id="purchases" style="margin-top:10px"></div>
+    </details>
     <details style="margin-top:12px">
       <summary class="hint" style="cursor:pointer">your details on the invoice</summary>
       <div style="margin-top:10px">
@@ -547,6 +564,33 @@ async function loadInvoices(){
     row.appendChild(btn); el.appendChild(row);
   });
   $('#invBadge').textContent=d.orders.length||'0';
+}
+
+function invoiceRange(){
+  const a=parseInt($('#invFrom').value||'0')||0, b=parseInt($('#invTo').value||'0')||0;
+  if(a<1||b<1){ toast('give both ends of the range',true); return; }
+  const n=Math.abs(b-a)+1;
+  if(n>60){ toast('60 orders at a time is the limit',true); return; }
+  toast('reading '+n+' order'+(n===1?'':'s')+' — this takes a moment');
+  window.open('/invoices?start='+a+'&end='+b,'_blank');
+}
+
+async function loadPurchases(){
+  const el=$('#purchases'); if(!el) return;
+  el.innerHTML='<p class="hint">reading your purchase history…</p>';
+  let d; try{d=await(await fetch('/api/purchases')).json()}catch{ el.innerHTML='<p class="hint">could not read it</p>'; return }
+  if(d.detail){ el.innerHTML='<p class="hint">'+esc(d.detail)+'</p>'; return }
+  if(!d.purchases||!d.purchases.length){ el.innerHTML='<p class="hint">nothing in your history</p>'; return }
+  el.innerHTML='';
+  d.purchases.forEach(o=>{
+    const row=document.createElement('div');
+    row.className='tab-row';
+    const date=(o.date||'').replace(/^\w+,\s*/,'').replace(/\s*\d\d:\d\d:\d\d.*$/,'');
+    row.innerHTML=`<div style="flex:1;min-width:0">
+      <div><b>${o.n}.</b> ${esc(o.title||'—')}</div>
+      <div class="tab-url">${esc(date)}${o.won?' · giveaway':''}</div></div>`;
+    el.appendChild(row);
+  });
 }
 
 function invoiceByTracking(){

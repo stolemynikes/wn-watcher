@@ -385,6 +385,92 @@ def api_invoice(order_id: str = "", tracking: str = ""):
     return Response(content=invoice.invoice_html(match, cfg), media_type="text/html")
 
 
+MAX_BATCH = 60
+
+
+@app.get("/api/purchases")
+def api_purchases():
+    """Your Whatnot purchase history, newest first — the list the activity
+    panel shows, read from its own query. This is what the invoice range is
+    counted against: 1 is the newest order.
+
+    No order has to be open for this. Reading the history needs the purchases
+    page, so one is opened in the background and closed again if it was not
+    already there.
+    """
+    import invoice
+    cfg = load_config()
+    port = int(cfg.get("debug_port", 9222))
+    if not chrome.port_open(port):
+        raise HTTPException(400, "browser is not running")
+    try:
+        rows = invoice.my_purchases(port)
+    except Exception as exc:
+        raise HTTPException(502, "could not read your purchases "
+                                 f"({exc.__class__.__name__})")
+    out = []
+    for n, r in enumerate(rows, 1):
+        amount = r.get("amount")
+        out.append({"n": n, "uuid": r.get("uuid"),
+                    "date": r.get("createdAt"), "title": r.get("title"),
+                    "status": r.get("prettyStatus") or r.get("status"),
+                    "amount": amount, "currency": r.get("currency"),
+                    "won": amount == 0})
+    return {"purchases": out, "max_batch": MAX_BATCH}
+
+
+@app.get("/invoices")
+def api_invoices(start: int = 0, end: int = 0, uuids: str = ""):
+    """One printable document with an invoice per order, for a range of your
+    purchase history — `start` and `end` are positions in /api/purchases, 1
+    being the newest, inclusive both ends. Or pass `uuids` to pick exactly.
+
+    Nothing has to be open: each order page is visited once in a single tab
+    that is closed afterwards, which is why this takes a few seconds per
+    order.
+    """
+    import invoice
+    cfg = load_config()
+    port = int(cfg.get("debug_port", 9222))
+    if not chrome.port_open(port):
+        raise HTTPException(400, "browser is not running")
+
+    picked = [u.strip() for u in uuids.split(",") if u.strip()]
+    note = ""
+    if not picked:
+        if start < 1 or end < 1:
+            raise HTTPException(400, "give a range: /invoices?start=1&end=5 "
+                                     "(1 is your newest order)")
+        lo, hi = (start, end) if start <= end else (end, start)
+        try:
+            rows = invoice.my_purchases(port)
+        except Exception as exc:
+            raise HTTPException(502, "could not read your purchases "
+                                     f"({exc.__class__.__name__})")
+        if not rows:
+            raise HTTPException(404, "your purchase history came back empty")
+        if lo > len(rows):
+            raise HTTPException(404, f"you have {len(rows)} orders in the list, "
+                                     f"so {lo} is past the end")
+        chosen = rows[lo - 1:hi]
+        picked = [r["uuid"] for r in chosen if r.get("uuid")]
+        note = (f"Orders {lo}–{min(hi, len(rows))} of your purchase history, "
+                f"newest first.")
+    if len(picked) > MAX_BATCH:
+        raise HTTPException(400, f"that is {len(picked)} orders — "
+                                 f"{MAX_BATCH} at a time is the limit")
+
+    orders, missed = invoice.read_orders_by_uuid(port, picked)
+    if not orders:
+        raise HTTPException(502, "none of those order pages would load — "
+                                 "is the browser still signed in?")
+    if missed:
+        note = (note + " " if note else "") + \
+            f"{len(missed)} of {len(picked)} would not load and are missing."
+    return Response(content=invoice.invoices_html(orders, cfg, note),
+                    media_type="text/html")
+
+
 SIGNATURE_PATH = PROJECT_DIR / "signature.b64"
 
 
