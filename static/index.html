@@ -370,6 +370,15 @@
       watcher and restarts them on the other account; log in the first time you
       open a new profile.</p>
     <div id="accounts">loading…</div>
+    <div class="row" style="margin-top:10px; gap:8px">
+      <input type="text" id="accLabel" placeholder="label, e.g. NL2"
+        style="width:120px" spellcheck="false">
+      <input type="text" id="accUser" placeholder="Whatnot username"
+        style="flex:1; min-width:120px" spellcheck="false" autocapitalize="off"
+        onkeydown="if(event.key==='Enter')addAccount()">
+      <button class="sm" onclick="addAccount()">+ add</button>
+    </div>
+    <div class="hint" style="margin-top:4px">Gets its own browser profile — switch to it, then log in once.</div>
   </section>
 
   <section class="card">
@@ -475,7 +484,7 @@ function toast(m,bad){const t=$('#toast');t.textContent=m;t.classList.toggle('ba
 async function post(url,body){
   try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body||{})});
-    const j=await r.json(); toast(j.error||j.message||'done',!r.ok);
+    const j=await r.json(); toast(j.error||j.detail||j.message||'done',!r.ok);
     refresh(); loadConfig(); loadPhone(); return j;
   }catch(e){toast(String(e),true)}
 }
@@ -667,6 +676,14 @@ async function loadStreamers(){
     row.appendChild(btn); el.appendChild(row);
   });
   $('#strBadge').textContent=d.streamers.length||'0';
+}
+
+async function addAccount(){
+  const label=($('#accLabel').value||'').trim(), username=($('#accUser').value||'').trim();
+  if(!label){ toast('give the account a label, e.g. NL2',true); return; }
+  const j=await post('/api/accounts/add',{label,username});
+  if(j && j.index!==undefined){ $('#accLabel').value=''; $('#accUser').value=''; }
+  loadAccounts();
 }
 
 async function loadAccounts(){

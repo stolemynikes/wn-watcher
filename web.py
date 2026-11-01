@@ -538,6 +538,43 @@ def api_account_username(req: AccountNameReq):
                                and control.read_pid() is not None)}
 
 
+class AccountAddReq(BaseModel):
+    label: str
+    username: str = ""
+
+
+@app.post("/api/accounts/add")
+def api_accounts_add(req: AccountAddReq):
+    """A new account with a Chrome profile of its own. One Whatnot login per
+    profile: logging a second account into an existing profile signs the first
+    one out there, and its username then no longer matches the draws.
+
+    The profile folder is only named here — Chrome creates it on the first
+    switch, which is when you log in."""
+    label = req.label.strip()[:24]
+    if not label:
+        raise HTTPException(400, "give the account a label, e.g. NL2")
+    cfg = load_config()
+    accs = chrome.accounts(cfg)
+    if any((a.get("label") or "").strip().lower() == label.lower() for a in accs):
+        raise HTTPException(400, f"there is already an account called {label}")
+
+    # A fresh folder, never one that already exists: an old profile left on
+    # disk may still be signed in to some other account.
+    slug = re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-") or "account"
+    taken = {a.get("profile") for a in accs}
+    profile, n = f"chrome-profile-{slug}", 2
+    while profile in taken or (PROJECT_DIR / profile).exists():
+        profile, n = f"chrome-profile-{slug}-{n}", n + 1
+
+    accs.append({"label": label, "profile": profile,
+                 "username": req.username.strip().lstrip("@")})
+    cfg["accounts"] = accs
+    save_config(cfg)
+    return {"message": f"added {label} — switch to it and log in once",
+            "index": len(accs) - 1}
+
+
 class SwitchReq(BaseModel):
     index: int
 
