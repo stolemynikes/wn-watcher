@@ -60,7 +60,7 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "foreign_domestic_giveaways", "presence_stale_seconds",
             "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value",
             "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency", "invoice_via_address",
-            "wake_mac", "wake_host", "wake_broadcast"}
+            "wake_mac", "wake_host", "wake_broadcast", "wake_panel"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -652,6 +652,66 @@ def api_wake():
             for port in (9, 7):
                 s.sendto(packet, (broadcast, port))
     return {"message": "wake packet sent — the PC needs ~20 s", "up": False}
+
+
+def _remote(base: str, path: str, body: dict | None = None, timeout: float = 30):
+    import urllib.request
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(base.rstrip("/") + path, data=data,
+                                 headers={"Content-Type": "application/json"},
+                                 method="GET" if body is None else "POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+@app.post("/api/pc/go")
+def api_pc_go():
+    """One tap from a phone: wake the PC, then have its own panel start Chrome
+    and the watcher. Blocks until done (about a minute at worst) so a Shortcut
+    can show the outcome as its result."""
+    cfg = load_config()
+    _, host, _ = _wake_target(cfg)
+    panel = str(cfg.get("wake_panel") or "")
+    steps = []
+    if _host_up(host):
+        steps.append("PC was awake")
+    else:
+        api_wake()
+        deadline = time.time() + 60
+        while time.time() < deadline and not _host_up(host):
+            time.sleep(2)
+        if not _host_up(host):
+            return {"message": "sent the wake packet but the PC did not answer within a minute",
+                    "ok": False}
+        steps.append("PC woke")
+    if not panel:
+        return {"message": "; ".join(steps) + " — set wake_panel to start the watcher too",
+                "ok": True}
+    # Right after waking, the PC's panel and Chrome need a moment to come back.
+    status, deadline = None, time.time() + 30
+    while time.time() < deadline:
+        try:
+            status = _remote(panel, "/api/status", timeout=5)
+            break
+        except Exception:
+            time.sleep(2)
+    if status is None:
+        return {"message": "; ".join(steps) + " — but its panel is not answering",
+                "ok": False}
+    try:
+        if not status.get("browser_up"):
+            _remote(panel, "/api/browser/start", {})
+            steps.append("Chrome started")
+            time.sleep(5)
+        if not (status.get("control") or {}).get("running"):
+            steps.append(str(_remote(panel, "/api/start", {"force": False}).get("message")
+                             or "watcher started"))
+        else:
+            steps.append("watcher was running")
+    except Exception as exc:
+        steps.append(f"starting failed: {exc}")
+        return {"message": "; ".join(steps), "ok": False}
+    return {"message": "; ".join(steps), "ok": True}
 
 def _hint(secret: str) -> str:
     secret = str(secret or "")
