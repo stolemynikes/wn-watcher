@@ -62,6 +62,10 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency", "invoice_via_address",
             "wake_mac", "wake_host", "wake_broadcast", "wake_panel"}
 
+# Which computer this panel runs on, shown in its header: with one panel per
+# machine open side by side on a phone, the URL alone is easy to misread.
+MACHINE = {"Darwin": "Mac", "Windows": "PC"}.get(platform.system(), platform.system())
+
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
 _PASSWORD_LOCK = threading.Lock()
@@ -194,7 +198,7 @@ def api_status():
     topic = str(cfg.get("ntfy_topic", ""))
     alerts = (bool(cfg.get("bark_key")) if cfg.get("notifier", "bark") == "bark"
               else bool(topic) and "CHANGE-ME" not in topic)
-    return {"control": st, "alerts_configured": alerts,
+    return {"control": st, "alerts_configured": alerts, "machine": MACHINE,
             "browser_port": int(cfg.get("debug_port", 9222)),
             "browser_up": chrome.port_open(int(cfg.get("debug_port", 9222)))}
 

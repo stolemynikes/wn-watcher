@@ -246,7 +246,7 @@
 <header>
   <div class="hbar">
     <div class="lights"><i></i><i></i><i></i></div>
-    <h1><b>whatnot-watcher</b> — control</h1>
+    <h1><b>whatnot-watcher</b> — <span id="machine">control</span></h1>
     <span class="status off" id="pill"><span class="dot"></span><span id="stateTxt">…</span></span>
     <span class="spacer"></span>
     <button class="primary" id="btnStart">start</button>
@@ -532,6 +532,8 @@ function renderLog(lines){
 async function refresh(){
   let s; try{s=await(await fetch('/api/status')).json()}catch{return}
   const run=s.control.running;
+  if(s.machine && $('#machine').textContent!==s.machine){
+    $('#machine').textContent=s.machine; document.title='watcher · '+s.machine; }
   $('#pill').className='status '+(run?'on':'off');
   $('#stateTxt').textContent=run?'watching':'stopped';
   $('#btnStart').disabled=run; $('#btnStop').disabled=!run;
