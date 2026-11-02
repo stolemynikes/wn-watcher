@@ -313,9 +313,12 @@ def api_open_link(req: OpenLinkReq):
     copied from the phone app, which Chrome follows through to the live stream.
     So you share a show from your phone, paste it here, and the desktop starts
     watching it."""
-    url = req.url.strip()
-    if not re.match(r"^https?://(www\.)?whatnot\.com/", url):
+    # The app's share sheet often hands over text around the link ("Check out
+    # … on Whatnot! https://…"), so take the first Whatnot URL inside it.
+    m = re.search(r"https?://(?:www\.)?whatnot\.com/\S+", req.url)
+    if not m:
         raise HTTPException(400, "not a whatnot.com link")
+    url = m.group(0)
     cfg = load_config()
     if not chrome.port_open(int(cfg.get("debug_port", 9222))):
         raise HTTPException(400, "browser is not running")
