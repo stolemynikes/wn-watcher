@@ -317,20 +317,18 @@ def api_open_link(req: OpenLinkReq):
     # … on Whatnot! https://…"), so take the first Whatnot URL inside it.
     m = re.search(r"https?://(?:www\.)?whatnot\.com/\S+", req.url)
     if not m:
-        raise HTTPException(400, "not a whatnot.com link")
+        raise HTTPException(400, "not a Whatnot link")
     url = m.group(0)
     cfg = load_config()
     if not chrome.port_open(int(cfg.get("debug_port", 9222))):
-        raise HTTPException(400, "browser is not running")
+        raise HTTPException(400, "Chrome is not running — start it first")
     if not chrome.open_visible(cfg, url):
         # 502, not a 200 carrying bad news: this is answered by a phone
         # shortcut, which shows an error for a failing status and nothing at
         # all for a successful one. A wedged browser took the link and opened
         # nothing, and "opened" came back either way.
-        raise HTTPException(502, "the browser took the link but opened "
-                                 "nothing — it looks wedged; restart it from "
-                                 "the panel and try again")
-    return {"message": "opened — the watcher will pick it up in a second"}
+        raise HTTPException(502, "Chrome is stuck — restart it from the panel")
+    return {"message": "opened"}
 
 
 class OpenStreamerReq(BaseModel):
@@ -677,18 +675,18 @@ def api_pc_go():
     panel = str(cfg.get("wake_panel") or "")
     steps = []
     if _host_up(host):
-        steps.append("PC was awake")
+        steps.append("PC was on")
     else:
         api_wake()
         deadline = time.time() + 60
         while time.time() < deadline and not _host_up(host):
             time.sleep(2)
         if not _host_up(host):
-            return {"message": "sent the wake packet but the PC did not answer within a minute",
+            return {"message": "PC did not wake up",
                     "ok": False}
-        steps.append("PC woke")
+        steps.append("PC on")
     if not panel:
-        return {"message": "; ".join(steps) + " — set wake_panel to start the watcher too",
+        return {"message": " · ".join(steps),
                 "ok": True}
     # Right after waking, the PC's panel and Chrome need a moment to come back.
     status, deadline = None, time.time() + 30
@@ -699,7 +697,7 @@ def api_pc_go():
         except Exception:
             time.sleep(2)
     if status is None:
-        return {"message": "; ".join(steps) + " — but its panel is not answering",
+        return {"message": " · ".join(steps + ["panel not answering"]),
                 "ok": False}
     try:
         if not status.get("browser_up"):
@@ -707,14 +705,14 @@ def api_pc_go():
             steps.append("Chrome started")
             time.sleep(5)
         if not (status.get("control") or {}).get("running"):
-            steps.append(str(_remote(panel, "/api/start", {"force": False}).get("message")
-                             or "watcher started"))
+            _remote(panel, "/api/start", {"force": False})
+            steps.append("watcher started")
         else:
-            steps.append("watcher was running")
+            steps.append("watcher already running")
     except Exception as exc:
-        steps.append(f"starting failed: {exc}")
-        return {"message": "; ".join(steps), "ok": False}
-    return {"message": "; ".join(steps), "ok": True}
+        steps.append("starting failed")
+        return {"message": " · ".join(steps), "detail": str(exc), "ok": False}
+    return {"message": " · ".join(steps), "ok": True}
 
 def _hint(secret: str) -> str:
     secret = str(secret or "")
