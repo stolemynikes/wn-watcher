@@ -1423,7 +1423,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     my_username = str(chrome.active_account(cfg).get("username")
                       or cfg.get("my_username", "")).strip().lstrip("@").lower()
     if not my_username:
-        log("my_username is not set — wins will only be noticed from the "
+        log("this account has no username (panel → account) — wins will only be noticed from the "
             "purchases tab, not the moment they are drawn")
     may_expand = bool(cfg.get("expand_giveaway", False))
     if may_expand:
