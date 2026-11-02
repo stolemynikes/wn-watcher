@@ -59,7 +59,8 @@ EDITABLE = {"my_username", "notifier", "bark_key", "ntfy_topic", "ntfy_server", 
             "close_duplicate_tabs", "restart_chrome_on_stuck",
             "foreign_domestic_giveaways", "presence_stale_seconds",
             "invoice_buyer_name", "invoice_buyer_address", "invoice_giveaway_value",
-            "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency", "invoice_via_address"}
+            "invoice_buyer_street", "invoice_buyer_postcode", "invoice_buyer_city", "invoice_buyer_country", "invoice_buyer_province", "invoice_default_origin", "invoice_currency", "invoice_via_address",
+            "wake_mac", "wake_host", "wake_broadcast"}
 
 app = FastAPI(title="Whatnot Watcher")
 LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
@@ -604,6 +605,53 @@ def api_accounts_switch(req: SwitchReq):
     return {"message": f"switched to {label} — log in if it is a new profile",
             "detail": "; ".join(str(s) for s in steps)}
 
+
+
+# --- waking another machine ---------------------------------------------------
+# The PC sleeps (S3) with Tailscale down, so it can only be reached the old way:
+# a magic packet broadcast on the home LAN, sent by this machine, which stays
+# home. Whether it woke is judged by its SSH port answering over the tailnet.
+
+
+def _wake_target(cfg: dict) -> tuple[bytes, str, str]:
+    mac = re.sub(r"[^0-9a-fA-F]", "", str(cfg.get("wake_mac") or ""))
+    if len(mac) != 12:
+        raise HTTPException(400, "set wake_mac (the PC's Ethernet MAC address) in config.json first")
+    return (bytes.fromhex(mac), str(cfg.get("wake_host") or ""),
+            str(cfg.get("wake_broadcast") or "255.255.255.255"))
+
+
+def _host_up(host: str, port: int = 22, timeout: float = 1.5) -> bool:
+    if not host:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+@app.get("/api/wake")
+def api_wake_status():
+    cfg = load_config()
+    if not cfg.get("wake_mac"):
+        return {"configured": False, "up": False}
+    _, host, _ = _wake_target(cfg)
+    return {"configured": True, "host": host, "up": _host_up(host)}
+
+
+@app.post("/api/wake")
+def api_wake():
+    mac, host, broadcast = _wake_target(load_config())
+    if _host_up(host):
+        return {"message": "PC is already awake", "up": True}
+    packet = b"\xff" * 6 + mac * 16
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        for _ in range(3):
+            for port in (9, 7):
+                s.sendto(packet, (broadcast, port))
+    return {"message": "wake packet sent — the PC needs ~20 s", "up": False}
 
 def _hint(secret: str) -> str:
     secret = str(secret or "")

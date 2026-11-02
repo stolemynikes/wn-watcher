@@ -362,6 +362,13 @@
     <div id="streamers">loading…</div>
   </section>
 
+  <section class="card" id="cardWake" style="display:none">
+    <h2>PC <span class="badge" id="wakeBadge">–</span></h2>
+    <p class="hint" style="margin-top:0">Wakes the Windows PC from sleep over
+      the home network. Put it to sleep, not off, so it can be woken.</p>
+    <div class="row"><button class="sm" onclick="wakePc()">wake PC</button></div>
+  </section>
+
   <section class="card" id="cardAccounts">
     <h2>account <span class="badge" id="accBadge">–</span></h2>
     <p class="hint" style="margin-top:0">One Whatnot login per profile — a GB
@@ -678,6 +685,13 @@ async function loadStreamers(){
   $('#strBadge').textContent=d.streamers.length||'0';
 }
 
+async function loadWake(){
+  let d; try{d=await(await fetch('/api/wake')).json()}catch{return}
+  $('#cardWake').style.display=d.configured?'':'none';
+  $('#wakeBadge').textContent=d.up?'awake':'asleep';
+}
+async function wakePc(){ await post('/api/wake',{}); setTimeout(loadWake,20000); }
+
 async function addAccount(){
   const label=($('#accLabel').value||'').trim(), username=($('#accUser').value||'').trim();
   if(!label){ toast('give the account a label, e.g. NL2',true); return; }
@@ -964,6 +978,7 @@ refresh(); loadConfig(); loadSelectors(); loadPhone(); loadSsh();
 loadInvoices(); loadInvoiceDetails();   // once — these hold input you type into
 setInterval(refresh,2500);
 setInterval(loadSsh,15000);
+loadWake(); setInterval(loadWake,15000);
 </script>
 </body>
 </html>
