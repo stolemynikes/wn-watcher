@@ -215,8 +215,13 @@ def radar_chromes(port: int) -> list:
     except ImportError:
         return []
     out = []
-    for proc in psutil.process_iter(["pid", "cmdline"]):
-        argv = proc.info.get("cmdline") or []
+    for proc in psutil.process_iter():
+        # Per process, not process_iter(attrs): an unreadable process raises
+        # (Windows: WinError 87 from ReadProcessMemory) inside the iterator.
+        try:
+            argv = proc.cmdline() or []
+        except Exception:
+            continue
         line = " ".join(argv)
         if f"--remote-debugging-port={port}" not in line:
             continue
@@ -226,7 +231,7 @@ def radar_chromes(port: int) -> list:
             if arg.startswith("--user-data-dir="):
                 profile = Path(arg.split("=", 1)[1])
                 if PROJECT_DIR in profile.parents or profile == PROJECT_DIR:
-                    out.append((proc.info["pid"], profile))
+                    out.append((proc.pid, profile))
                 break
     return out
 

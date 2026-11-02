@@ -70,13 +70,15 @@ def foreign_instances(max_age: float = FOREIGN_CACHE_SECONDS):
     if time.time() - _FOREIGN_CACHE["at"] < max_age:
         return _FOREIGN_CACHE["value"]
     found = []
-    for proc in psutil.process_iter(["pid", "cmdline"]):
+    for proc in psutil.process_iter():
         # Broad catch on purpose: reading another user's process can raise a
-        # plain PermissionError from the OS (macOS KERN_PROCARGS2), not just
+        # plain PermissionError from the OS (macOS KERN_PROCARGS2), or on
+        # Windows an OSError (WinError 87) from ReadProcessMemory, not just
         # psutil's own exceptions — and one unreadable process must never take
-        # down /api/status.
+        # down /api/status. Read it here, not via process_iter(attrs), which
+        # raises inside the iterator where no try can reach it.
         try:
-            argv = proc.info["cmdline"] or []
+            argv = proc.cmdline() or []
         except Exception:
             continue
         # Identify by the SCRIPT path, not the whole command line: our venv's
@@ -90,7 +92,7 @@ def foreign_instances(max_age: float = FOREIGN_CACHE_SECONDS):
         except OSError:
             is_ours = False
         if not is_ours:
-            found.append((proc.info["pid"], " ".join(argv)))
+            found.append((proc.pid, " ".join(argv)))
     _FOREIGN_CACHE.update(at=time.time(), value=found)
     return found
 
