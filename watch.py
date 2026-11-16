@@ -126,7 +126,17 @@ def _atomic_write(path, text: str) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     try:
         tmp.write_text(text, encoding="utf-8")
-        tmp.replace(path)
+        # Windows refuses the rename while anything else has the target open
+        # for a moment (the panel reading it, a virus scan): WinError 5 on
+        # 2026-11-16 killed the watcher's shutdown. Retry briefly.
+        for attempt in range(20):
+            try:
+                tmp.replace(path)
+                break
+            except PermissionError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.1)
     except OSError:
         try:
             tmp.unlink(missing_ok=True)
