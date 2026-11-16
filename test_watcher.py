@@ -766,6 +766,36 @@ class PresenceStateResync(unittest.TestCase):
         self.assertEqual([k for k,_ in entry["presence_events"]], ["left"])
 
 
+class DuplicateTabs(unittest.TestCase):
+    """Two tabs on one stream: the older closes, the one just opened stays."""
+
+    class Page:
+        def __init__(self, url): self.url = url
+
+    def test_newest_tab_is_kept(self):
+        P = self.Page
+        old, other = P("https://www.whatnot.com/live/abc"), P("https://www.whatnot.com/live/xyz")
+        seen = {}
+        self.assertEqual(watch.duplicate_tabs([old, other], seen, 1.0), [])
+        new = P("https://www.whatnot.com/live/abc?referringSource=feed")
+        # Chrome may list the new tab first or last; the age decides, not the order.
+        self.assertEqual(watch.duplicate_tabs([new, old, other], seen, 2.0), [old])
+        self.assertEqual(watch.duplicate_tabs([old, other, new], seen, 2.0), [old])
+
+    def test_feed_tab_clicking_into_a_stream_counts_as_new(self):
+        P = self.Page
+        stream, feed = P("https://www.whatnot.com/live/abc"), P("https://www.whatnot.com/")
+        seen = {}
+        watch.duplicate_tabs([stream, feed], seen, 1.0)
+        feed.url = "https://www.whatnot.com/live/abc"
+        self.assertEqual(watch.duplicate_tabs([stream, feed], seen, 5.0), [stream])
+
+    def test_other_pages_ignored(self):
+        P = self.Page
+        self.assertEqual(watch.duplicate_tabs(
+            [P("https://www.whatnot.com/"), P("https://www.whatnot.com/")], {}, 1.0), [])
+
+
 class StreamEndedSignal(unittest.TestCase):
     """livestream_update status ENDED = the streamer went offline."""
 

@@ -608,6 +608,40 @@ def count_open_pages(browser) -> int | None:
         return None
 
 
+def stream_id_of(url: str) -> str | None:
+    """The /live/<id> part of a stream URL, or None for any other page."""
+    if "/live/" not in url:
+        return None
+    return url.split("/live/")[1].split("?")[0].split("#")[0] or None
+
+
+def duplicate_tabs(pages, first_seen: dict, now: float) -> list:
+    """Tabs to close because a newer tab shows the same stream.
+
+    Keeps the tab that turned up last: that is the one you just opened or
+    clicked into from the feed, so closing it looked like the stream
+    vanishing while still live. first_seen maps id(page) to when the watcher
+    first saw that tab on this stream; it is updated here.
+    """
+    by_stream = {}
+    for page in pages:
+        try:
+            sid = stream_id_of(page.url or "")
+        except Exception:
+            continue
+        if not sid:
+            continue
+        key = (id(page), sid)
+        first_seen.setdefault(key, now)
+        by_stream.setdefault(sid, []).append((first_seen[key], page))
+    close = []
+    for tabs in by_stream.values():
+        if len(tabs) > 1:
+            tabs.sort(key=lambda t: t[0])   # stable: same age keeps list order
+            close.extend(page for _, page in tabs[:-1])
+    return close
+
+
 def whatnot_pages(browser):
     """Every tab currently on Whatnot. Recomputed each poll, so tabs you open
     or close during a run are picked up without restarting.
@@ -1414,6 +1448,7 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
     expanded = set()          # tabs whose banner we have already asked to open
     won_here = set()          # tabs whose draw overlay we have already alerted on
     ws_state = {}             # url -> learned giveaway info from socket frames
+    tab_first_seen = {}       # (id(page), stream id) -> first poll that saw it
     origin_state = {}         # url -> where that stream's seller ships from
     presence_lost = set()     # tabs already alerted as gone quiet
     purchases_last_call = {"t": 0.0}   # throttle for the purchases refetch()
@@ -1517,9 +1552,23 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                 pages = whatnot_pages(browser) or []
             live_urls = set()
             snapshot = []
-            seen_stream_ids = set()   # dedupe duplicate tabs of one stream
             live_pages = []           # (url, page) of each kept live tab, for the cap
             orders_seen = []          # parsed Order Details pages, for the invoice tab
+
+            # A raid, or a second open of a stream you already have, leaves two
+            # tabs on it. They carry the same socket, so the extra one adds
+            # nothing but load: close the older one(s), keep the newest.
+            if close_duplicates:
+                for page in duplicate_tabs(pages, tab_first_seen, time.monotonic()):
+                    log(f"duplicate tab of the same stream — closing the older one — {page.url}")
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+                    pages = [p for p in pages if p is not page]
+                live_ids = {id(p) for p in pages}
+                for key in [k for k in tab_first_seen if k[0] not in live_ids]:
+                    del tab_first_seen[key]
 
             for page in pages:
                 try:
@@ -1549,23 +1598,6 @@ def cmd_watch(cfg: dict, sel: dict) -> None:
                     snapshot.append({"url": url, "title": info["title"],
                                      "kind": kind})
                     continue
-
-                # A raid, or an accidental second open, leaves two tabs on the
-                # same stream. Keep the first seen this poll, close the rest —
-                # they carry the same socket, so a duplicate adds nothing but
-                # load. Matched on the /live/<id>, so ?referringSource=… copies
-                # still count as the same stream.
-                stream_id = url.split("/live/")[1].split("?")[0]
-                if stream_id in seen_stream_ids:
-                    if close_duplicates:
-                        log(f"duplicate tab of the same stream — closing — {url}")
-                        try:
-                            page.close()
-                        except Exception:
-                            pass
-                        continue
-                else:
-                    seen_stream_ids.add(stream_id)
 
                 live_urls.add(url)
                 live_pages.append((url, page))
