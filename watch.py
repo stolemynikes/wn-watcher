@@ -1898,7 +1898,8 @@ def announce_giveaway(notifier, url: str, reading: dict,
     body = prize or "A giveaway just started."
     if type_label:
         body += f"\n{type_label}"
-    body += "\nOpen the app to enter."
+    # The time lets the giveaway bot measure how long a push takes to reach it.
+    body += f"\nSent {datetime.now().strftime('%H:%M:%S')} · open the app to enter."
 
     if remember is not None and prize:
         # Kept so a win can be traced back to the stream it came from — the
