@@ -2056,11 +2056,14 @@ def announce_win_from_stream(notifier, url: str, seller: str, state: dict) -> No
     tab is still the reliable backstop, because this overlay is on screen for
     only a few seconds and a poll can miss it.
     """
-    log(f"WON — {seller or url} (seen in the stream)")
+    # The prize of the giveaway last announced on this stream: the one just
+    # drawn. Put first in the body, so the giveaway bot can log what was won.
+    prize = (state.get("recent_giveaways", {}).get(url) or {}).get("prize") or ""
+    log(f"WON — {seller or url}{' — ' + prize if prize else ''} (seen in the stream)")
     state.setdefault("stream_wins", {})[url] = time.time()
     try:
         notifier.send("🏆 You won" + (f" — {seller}" if seller else "") + "! 🏆",
-                      "Seen live in the stream. Check the app.",
+                      (f"{prize}\n" if prize else "") + "Seen live in the stream. Check the app.",
                       url, priority="max", group="results")
     except Exception as exc:
         log(f"win notification failed ({exc.__class__.__name__})")
